@@ -109,6 +109,9 @@ function applyStoredValues() {
     inflation_rate_pa: "inflation_rate",
     sparerpauschbetrag: "sparerpauschbetrag",
     basiszins: "basiszins",
+    capital_preservation_threshold: "capital_preservation_threshold",
+    capital_preservation_reduction: "capital_preservation_reduction",
+    capital_preservation_recovery: "capital_preservation_recovery",
   };
   
   // Select-Elemente (Dropdowns)
@@ -127,6 +130,7 @@ function applyStoredValues() {
     { id: "inflation_adjust_withdrawal", key: "inflation_adjust_withdrawal" },
     { id: "inflation_adjust_special_savings", key: "inflation_adjust_special_savings" },
     { id: "inflation_adjust_special_withdrawal", key: "inflation_adjust_special_withdrawal" },
+    { id: "capital_preservation_enabled", key: "capital_preservation_enabled" },
   ];
   for (const { id, key } of checkboxes) {
     const el = document.getElementById(id);
@@ -176,6 +180,10 @@ function getDefaultValues() {
     sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer: "keine",
     basiszins: 2.53,
+    capital_preservation_enabled: false,
+    capital_preservation_threshold: 80,
+    capital_preservation_reduction: 25,
+    capital_preservation_recovery: 10,
   };
 }
 
@@ -872,6 +880,10 @@ function simulate(params) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
+    capital_preservation_enabled = false,
+    capital_preservation_threshold = 80,
+    capital_preservation_reduction = 25,
+    capital_preservation_recovery = 10,
   } = params;
 
   // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
@@ -907,6 +919,10 @@ function simulate(params) {
   let basePayoutValue = null; // Basis-Entnahme für Inflationsanpassung
 
   let cumulativeInflation = 1;
+  
+  // Kapitalerhalt-Modus Tracking
+  let capitalPreservationActive = false;
+  let capitalPreservationMonths = 0;
   
   // Vorabpauschale-Tracking: ETF-Wert am Jahresanfang
   let etfValueYearStart = start_etf;
@@ -1059,6 +1075,30 @@ function simulate(params) {
         currentPayout = withdrawal_max;
       }
 
+      // Kapitalerhalt-Modus: Entnahme reduzieren wenn Vermögen unter Schwelle fällt
+      let capitalPreservationActiveThisMonth = false;
+      if (capital_preservation_enabled && entnahmeStartTotal > 0) {
+        const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
+        const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
+        const thresholdValue = entnahmeStartTotal * (capital_preservation_threshold / 100);
+        const recoveryValue = entnahmeStartTotal * ((capital_preservation_threshold + capital_preservation_recovery) / 100);
+        
+        // Hysterese: Aktivieren bei Unterschreitung, Deaktivieren erst bei Erholung über recoveryValue
+        if (currentTotal < thresholdValue) {
+          capitalPreservationActive = true;
+        } else if (currentTotal >= recoveryValue) {
+          capitalPreservationActive = false;
+        }
+        // Sonst: Zustand beibehalten (Hysterese)
+        
+        if (capitalPreservationActive) {
+          // Entnahme um den Reduktionsprozentsatz verringern
+          currentPayout = currentPayout * (1 - capital_preservation_reduction / 100);
+          capitalPreservationActiveThisMonth = true;
+          capitalPreservationMonths++;
+        }
+      }
+
       monthlyPayout = currentPayout; // Nur reguläre monatliche Entnahme (für Statistik)
       let needed_net = currentPayout;
       if (special_interval_years_withdrawal > 0
@@ -1169,7 +1209,14 @@ function simulate(params) {
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
       cumulative_inflation: cumulativeInflation,
+      capital_preservation_active: capitalPreservationActiveThisMonth || false,
     });
+  }
+
+  // Kapitalerhalt-Statistiken am Ende anhängen (als Meta-Info)
+  if (history.length > 0) {
+    history.capitalPreservationMonths = capitalPreservationMonths;
+    history.capitalPreservationEnabled = capital_preservation_enabled;
   }
 
   return history;
@@ -1314,7 +1361,33 @@ function renderStats(history, params) {
     document.getElementById("stat-effective-rate").textContent = "-";
   }
 
-  // Warnung bei Verm\u00f6gensaufbrauch
+  // Kapitalerhalt-Statistik anzeigen
+  const cpCard = document.getElementById("stat-card-capital-preservation");
+  const cpMonthsEl = document.getElementById("stat-capital-preservation-months");
+  const cpHintEl = document.getElementById("stat-capital-preservation-hint");
+  
+  if (cpCard && cpMonthsEl) {
+    if (history.capitalPreservationEnabled && entnahmeRows.length > 0) {
+      cpCard.style.display = "";
+      const cpMonths = history.capitalPreservationMonths || 0;
+      const cpYears = (cpMonths / 12).toFixed(1);
+      const cpPercent = entnahmeRows.length > 0 ? ((cpMonths / entnahmeRows.length) * 100).toFixed(0) : 0;
+      
+      if (cpMonths > 0) {
+        cpMonthsEl.textContent = `${cpMonths} Monate`;
+        cpHintEl.textContent = `${cpPercent}% der Entnahmephase (${cpYears} Jahre)`;
+        cpCard.classList.add("stat-card--active");
+      } else {
+        cpMonthsEl.textContent = "0 Monate";
+        cpHintEl.textContent = "Schwelle nie unterschritten";
+        cpCard.classList.remove("stat-card--active");
+      }
+    } else {
+      cpCard.style.display = "none";
+    }
+  }
+
+  // Warnung bei Vermögensaufbrauch
   const warningEl = document.getElementById("stat-warning");
   if (warningEl) {
     // Pr\u00fcfe ob Verm\u00f6gen in der Entnahmephase stark gesunken oder aufgebraucht wurde
@@ -1615,6 +1688,10 @@ form.addEventListener("submit", (e) => {
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       rent_mode: mode,
+      capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+      capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+      capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+      capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
     };
 
     lastHistory = simulate(params);
@@ -1859,6 +1936,10 @@ function simulateStochastic(params, annualVolatility) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
+    capital_preservation_enabled = false,
+    capital_preservation_threshold = 80,
+    capital_preservation_reduction = 25,
+    capital_preservation_recovery = 10,
   } = params;
 
   let kirchensteuerSatz = 0;
@@ -1893,6 +1974,9 @@ function simulateStochastic(params, annualVolatility) {
   
   // Vorabpauschale-Tracking
   let etfValueYearStart = start_etf;
+  
+  // Kapitalerhalt-Modus Tracking
+  let capitalPreservationActive = false;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
@@ -2026,6 +2110,24 @@ function simulateStochastic(params, annualVolatility) {
       }
       if (withdrawal_max > 0 && currentPayout > withdrawal_max) {
         currentPayout = withdrawal_max;
+      }
+
+      // Kapitalerhalt-Modus: Entnahme reduzieren wenn Vermögen unter Schwelle fällt
+      if (capital_preservation_enabled && entnahmeStartTotal > 0) {
+        const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
+        const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
+        const thresholdValue = entnahmeStartTotal * (capital_preservation_threshold / 100);
+        const recoveryValue = entnahmeStartTotal * ((capital_preservation_threshold + capital_preservation_recovery) / 100);
+        
+        if (currentTotal < thresholdValue) {
+          capitalPreservationActive = true;
+        } else if (currentTotal >= recoveryValue) {
+          capitalPreservationActive = false;
+        }
+        
+        if (capitalPreservationActive) {
+          currentPayout = currentPayout * (1 - capital_preservation_reduction / 100);
+        }
       }
 
       monthlyPayout = currentPayout;
@@ -2777,6 +2879,10 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       rent_mode: mode,
+      capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+      capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+      capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+      capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
     };
     
     const iterations = readNumber("mc_iterations", { min: 100, max: 10000 });

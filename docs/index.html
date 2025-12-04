@@ -372,6 +372,34 @@
 
         <div class="group">
           <div class="group__header">
+            <h2>Kapitalerhalt-Modus</h2>
+            <p>Automatische Entnahme-Anpassung bei Vermögensrückgang.</p>
+          </div>
+          <div class="grid">
+            <label class="field field--checkbox">
+              <input type="checkbox" id="capital_preservation_enabled">
+              <span class="field-label" data-tooltip="Aktiviert automatische Entnahme-Reduktion, wenn das Vermögen unter den Schwellwert fällt.">Kapitalerhalt-Modus aktivieren</span>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Vermögensschwelle in % des Startvermögens bei Entnahmebeginn. Unterschreitung löst Reduktion aus.">Schwellwert (% vom Startvermögen)</span>
+              <input type="number" step="5" id="capital_preservation_threshold" value="80" min="10" max="100">
+              <small class="field-hint">z.B. 80% = Reduktion bei 20% Verlust</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Um wie viel Prozent die Entnahme reduziert wird, wenn der Schwellwert unterschritten wird.">Entnahme-Reduktion (%)</span>
+              <input type="number" step="5" id="capital_preservation_reduction" value="25" min="5" max="75">
+              <small class="field-hint">z.B. 25% Reduktion der Wunschrente</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Wie viel % über dem Schwellwert das Vermögen liegen muss, um zur vollen Entnahme zurückzukehren.">Erholungspuffer (% über Schwelle)</span>
+              <input type="number" step="5" id="capital_preservation_recovery" value="10" min="0" max="50">
+              <small class="field-hint">z.B. 10% = volle Entnahme ab 90%</small>
+            </label>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group__header">
             <h2>Monte-Carlo-Simulation</h2>
             <p>Stochastische Analyse mit variabler ETF-Rendite.</p>
           </div>
@@ -521,6 +549,11 @@
             <div class="stat-card">
               <span class="stat-label">Effektive Entnahmerate</span>
               <span class="stat-value" id="stat-effective-rate">-</span>
+            </div>
+            <div class="stat-card stat-card--capital-preservation" id="stat-card-capital-preservation" style="display: none;">
+              <span class="stat-label">Kapitalerhalt aktiv</span>
+              <span class="stat-value" id="stat-capital-preservation-months">-</span>
+              <small class="stat-hint" id="stat-capital-preservation-hint">Monate mit reduzierter Entnahme</small>
             </div>
           </div>
           <div id="stat-warning" class="stat-warning"></div>
