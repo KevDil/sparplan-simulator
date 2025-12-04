@@ -389,6 +389,37 @@ input[type="number"]:focus {
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
 }
 
+/* Accessibility: Focus-visible für Keyboard-Navigation */
+input[type="number"]:focus-visible,
+select:focus-visible,
+button:focus-visible,
+.btn:focus-visible,
+.tab:focus-visible,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+/* Skip Link für Keyboard-Navigation */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0;
+  background: var(--accent);
+  color: #0b1120;
+  padding: 12px 24px;
+  z-index: 1000;
+  font-weight: 700;
+  text-decoration: none;
+  border-radius: 0 0 8px 0;
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
 .mode-switch {
   display: flex;
   gap: 10px;
@@ -756,7 +787,7 @@ select option {
   color: var(--accent);
 }
 
-/* Warnung bei Verm\u00f6gensaufbrauch */
+/* Warnung bei Vermögensaufbrauch */
 .stat-warning {
   margin-top: 16px;
   padding: 12px 16px;
@@ -1053,6 +1084,7 @@ select option {
 
 .mc-results {
   /* Results container - shown when simulation completes */
+  display: block;
 }
 
 .stat-card--mc {

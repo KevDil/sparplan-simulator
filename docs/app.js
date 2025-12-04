@@ -49,6 +49,23 @@ function toMonthlyRate(annualPercent) {
   return Math.pow(1 + annualPercent / 100, 1 / MONTHS_PER_YEAR) - 1;
 }
 
+// Konvertiert jährliche Volatilität zu monatlicher
+function toMonthlyVolatility(annualVolatility) {
+  return annualVolatility / Math.sqrt(12);
+}
+
+// Box-Muller Transform für Normalverteilung (für Monte-Carlo)
+function randomNormal(mean = 0, stdDev = 1) {
+  let u1, u2;
+  do {
+    u1 = Math.random();
+    u2 = Math.random();
+  } while (u1 === 0);
+  
+  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+  return z0 * stdDev + mean;
+}
+
 function readNumber(id, { min = null, max = null, allowZero = true } = {}) {
   const el = document.getElementById(id);
   const label = el.previousElementSibling?.textContent || id;
@@ -842,6 +859,46 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
   }
 }
 
+// ============ LOT CONSOLIDATION (Performance) ============
+
+/**
+ * Konsolidiert ETF-Lots mit gleichem Kaufpreis (nach Rundung), um die Array-Größe zu reduzieren.
+ * Wird jährlich aufgerufen, um bei langen Simulationen die Performance zu verbessern.
+ * @param {Array} etfLots - Array von {amount, price, monthIdx}
+ * @param {number} priceTolerance - Preistoleranz für Zusammenführung (Standard: 0.01 = 1 Cent)
+ * @returns {Array} Konsolidiertes Lot-Array
+ */
+function consolidateLots(etfLots, priceTolerance = 0.01) {
+  if (etfLots.length <= 1) return etfLots;
+  
+  // Gruppiere Lots nach gerundetem Preis
+  const grouped = new Map();
+  
+  for (const lot of etfLots) {
+    if (lot.amount <= 0) continue;
+    
+    // Runde Preis auf 2 Dezimalstellen für Gruppierung
+    const roundedPrice = Math.round(lot.price / priceTolerance) * priceTolerance;
+    const key = roundedPrice.toFixed(4);
+    
+    if (grouped.has(key)) {
+      const existing = grouped.get(key);
+      // Gewichteter Durchschnittspreis
+      const totalAmount = existing.amount + lot.amount;
+      const avgPrice = (existing.price * existing.amount + lot.price * lot.amount) / totalAmount;
+      existing.amount = totalAmount;
+      existing.price = avgPrice;
+      // Behalte ältesten monthIdx (für FIFO-Reihenfolge)
+      existing.monthIdx = Math.min(existing.monthIdx, lot.monthIdx);
+    } else {
+      grouped.set(key, { ...lot });
+    }
+  }
+  
+  // Konvertiere Map zurück zu Array, sortiert nach monthIdx (FIFO-Ordnung)
+  return Array.from(grouped.values()).sort((a, b) => a.monthIdx - b.monthIdx);
+}
+
 // ============ ETF SELLING (EXTRACTED) ============
 
 function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo = true) {
@@ -906,7 +963,13 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
   return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed, grossProceeds };
 }
 
-function simulate(params) {
+/**
+ * Unified simulation function for both standard and Monte-Carlo simulations.
+ * @param {Object} params - Simulation parameters
+ * @param {number} volatility - Annual volatility for stochastic simulation (0 = deterministic)
+ * @returns {Array} History array with monthly data points
+ */
+function simulate(params, volatility = 0) {
   const {
     start_savings,
     start_etf,
@@ -940,6 +1003,10 @@ function simulate(params) {
     capital_preservation_reduction = 25,
     capital_preservation_recovery = 10,
   } = params;
+  
+  // Stochastic mode: volatility > 0 aktiviert Monte-Carlo-Modus
+  const isStochastic = volatility > 0;
+  const monthlyVolatility = isStochastic ? toMonthlyVolatility(volatility / 100) : 0;
 
   // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
   let kirchensteuerSatz = 0;
@@ -996,6 +1063,7 @@ function simulate(params) {
     cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
+    const totalPortfolioStart = savings + totalEtfValueStart; // Für Portfolio-Rendite (SoRR)
 
     // Neues Steuerjahr -> Freibetrag zurücksetzen und ETF-Wert/Preis am Jahresanfang speichern
     if (yearIdx !== currentTaxYear) {
@@ -1008,8 +1076,21 @@ function simulate(params) {
     }
 
     // Wertentwicklung vor Cashflows
-    currentEtfPrice *= 1 + monthlyEtfRate;
-    const etfGrowth = totalEtfValueStart * monthlyEtfRate;
+    // Bei stochastischer Simulation: GBM (Geometric Brownian Motion)
+    // Bei deterministischer Simulation: feste monatliche Rendite
+    let monthlyEtfReturn;
+    if (isStochastic) {
+      // GBM: S_t+1 = S_t * exp((μ - σ²/2) + σ*Z)
+      const continuousMonthlyRate = Math.log(1 + monthlyEtfRate);
+      const drift = continuousMonthlyRate - 0.5 * monthlyVolatility * monthlyVolatility;
+      const z = randomNormal(0, 1);
+      monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z);
+      currentEtfPrice *= monthlyEtfReturn;
+    } else {
+      monthlyEtfReturn = 1 + monthlyEtfRate;
+      currentEtfPrice *= monthlyEtfReturn;
+    }
+    const etfGrowth = totalEtfValueStart * (monthlyEtfReturn - 1);
 
     const savingsInterest = savings * monthlySavingsRate;
     
@@ -1273,6 +1354,13 @@ function simulate(params) {
       }
     }
     tax_paid += vorabpauschaleTax;
+    
+    // Lot-Konsolidierung am Jahresende für Performance (alle 12 Monate)
+    if (monthInYear === 12 && etfLots.length > 50) {
+      const consolidated = consolidateLots(etfLots);
+      etfLots.length = 0;
+      etfLots.push(...consolidated);
+    }
 
     // Gesamtwerte
     const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
@@ -1281,6 +1369,18 @@ function simulate(params) {
 
     // Aktuelle Entnahme für diesen Monat (nach Limits)
     const effectivePayout = isSavingsPhase ? null : (withdrawal > 0 ? withdrawal : null);
+    
+    // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden (nur für MC relevant)
+    const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
+    
+    // Portfolio-Gesamtrendite (gewichtet nach ETF/Cash-Anteil am Periodenstart)
+    const savingsReturnFactor = 1 + monthlySavingsRate;
+    let portfolioReturn = monthlyEtfReturn;
+    if (totalPortfolioStart > 0) {
+      const etfWeight = totalEtfValueStart / totalPortfolioStart;
+      const cashWeight = 1 - etfWeight;
+      portfolioReturn = etfWeight * monthlyEtfReturn + cashWeight * savingsReturnFactor;
+    }
     
     history.push({
       month: monthIdx,
@@ -1295,6 +1395,8 @@ function simulate(params) {
       savings_interest: savingsInterest,
       withdrawal: withdrawal_paid,
       withdrawal_real: withdrawal_paid / cumulativeInflation,
+      withdrawal_requested: withdrawal, // Für Shortfall-Analyse (MC)
+      shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt (MC)
       monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
       monthly_payout_real: monthlyPayout / cumulativeInflation,
       tax_paid,
@@ -1302,6 +1404,8 @@ function simulate(params) {
       payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
+      etfReturn: monthlyEtfReturn, // Nur ETF-Rendite (für MC)
+      portfolioReturn, // Portfolio-Gesamtrendite inkl. Cash (für SoRR-Analyse)
       cumulative_inflation: cumulativeInflation,
       capital_preservation_active: capitalPreservationActiveThisMonth || false,
     });
@@ -2143,383 +2247,15 @@ let lastMcResults = null;
 let mcUseLogScale = true; // Standard: logarithmische Skala
 let mcUseRealValues = false; // Standard: nominale Werte im Graph
 
-// Box-Muller Transform für Normalverteilung
-function randomNormal(mean = 0, stdDev = 1) {
-  let u1, u2;
-  do {
-    u1 = Math.random();
-    u2 = Math.random();
-  } while (u1 === 0);
-  
-  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-  return z0 * stdDev + mean;
-}
-
-// Konvertiert jährliche Volatilität zu monatlicher
-function toMonthlyVolatility(annualVolatility) {
-  return annualVolatility / Math.sqrt(12);
-}
-
-// Modifizierte Simulation mit stochastischer ETF-Rendite
+/**
+ * Wrapper for stochastic Monte-Carlo simulation.
+ * Calls the unified simulate() function with volatility parameter.
+ * @param {Object} params - Simulation parameters
+ * @param {number} annualVolatility - Annual volatility in percent (e.g., 15 for 15%)
+ * @returns {Array} History array with monthly data points
+ */
 function simulateStochastic(params, annualVolatility) {
-  const {
-    start_savings,
-    start_etf,
-    monthly_savings,
-    monthly_etf,
-    savings_rate_pa,
-    etf_rate_pa,
-    etf_ter_pa = 0,
-    savings_target,
-    annual_raise_percent,
-    savings_years,
-    withdrawal_years,
-    monthly_payout_net,
-    monthly_payout_percent,
-    withdrawal_min = 0,
-    withdrawal_max = 0,
-    inflation_adjust_withdrawal = true,
-    special_payout_net_savings,
-    special_interval_years_savings,
-    inflation_adjust_special_savings = true,
-    special_payout_net_withdrawal,
-    special_interval_years_withdrawal,
-    inflation_adjust_special_withdrawal = true,
-    inflation_rate_pa = 0,
-    sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
-    kirchensteuer = "keine",
-    basiszins = 2.53,
-    use_lifo = false,
-    capital_preservation_enabled = false,
-    capital_preservation_threshold = 80,
-    capital_preservation_reduction = 25,
-    capital_preservation_recovery = 10,
-  } = params;
-
-  let kirchensteuerSatz = 0;
-  if (kirchensteuer === "8") kirchensteuerSatz = KIRCHENSTEUER_SATZ_8;
-  else if (kirchensteuer === "9") kirchensteuerSatz = KIRCHENSTEUER_SATZ_9;
-  const taxRate = calculateTaxRate(kirchensteuerSatz);
-
-  const history = [];
-  let savings = start_savings;
-  let currentEtfPrice = INITIAL_ETF_PRICE;
-  const etfLots = [];
-  if (start_etf > 0) {
-    etfLots.push({ amount: start_etf / currentEtfPrice, price: currentEtfPrice, monthIdx: 0 });
-  }
-
-  const effectiveEtfRate = etf_rate_pa - etf_ter_pa;
-  const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
-  const monthlyEtfMean = toMonthlyRate(effectiveEtfRate);
-  const monthlyVolatility = toMonthlyVolatility(annualVolatility / 100);
-  const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
-  const annualRaise = annual_raise_percent / 100;
-  const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
-
-  let savingsFull = savings >= savings_target;
-  let yearlyUsedFreibetrag = 0;
-  let currentTaxYear = 0;
-  let payoutFromPercentDone = false;
-  let payoutValue = monthly_payout_net;
-  let entnahmeStartTotal = null;
-  let basePayoutValue = null;
-  let cumulativeInflation = 1;
-  
-  // Vorabpauschale-Tracking
-  let etfValueYearStart = start_etf;
-  let etfPriceAtYearStart = currentEtfPrice;
-  // Nur Käufe für Vorabpauschale (Verkäufe wurden bereits versteuert)
-  let etfNetPurchasesThisYear = 0;
-  
-  // Kapitalerhalt-Modus Tracking
-  let capitalPreservationActive = false;
-
-  for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
-    const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
-    const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
-    const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
-    
-    cumulativeInflation *= (1 + monthlyInflationRate);
-    const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
-    const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
-    const totalPortfolioStart = savings + totalEtfValueStart; // Für Portfolio-Rendite (SoRR)
-
-    if (yearIdx !== currentTaxYear) {
-      currentTaxYear = yearIdx;
-      yearlyUsedFreibetrag = 0;
-      etfValueYearStart = totalEtfValueStart;
-      etfPriceAtYearStart = currentEtfPrice;
-      etfNetPurchasesThisYear = 0;
-    }
-
-    // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
-    // GBM: S_t = S_0 * exp((μ - σ²/2)*t + σ*W_t)
-    // Für diskreten Zeitschritt dt=1 Monat: S_t+1 = S_t * exp((μ - σ²/2) + σ*Z)
-    // wobei Z ~ N(0,1). Dies garantiert E[S_t] = S_0 * e^(μt) und verhindert negative Preise.
-    // WICHTIG: μ muss die kontinuierliche Rate sein: ln(1 + r), nicht r selbst!
-    const continuousMonthlyRate = Math.log(1 + monthlyEtfMean);
-    const drift = continuousMonthlyRate - 0.5 * monthlyVolatility * monthlyVolatility;
-    const z = randomNormal(0, 1);
-    const monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z); // Multiplikativer Faktor
-    currentEtfPrice *= monthlyEtfReturn;
-
-    const savingsInterest = savings * monthlySavingsRate;
-    let savingsInterestNet = savingsInterest;
-    let savingsInterestTax = 0;
-    if (savingsInterest > 0) {
-      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-      const taxableInterest = Math.max(0, savingsInterest - remainingFreibetrag);
-      savingsInterestTax = taxableInterest * taxRate;
-      savingsInterestNet = savingsInterest - savingsInterestTax;
-      yearlyUsedFreibetrag += Math.min(savingsInterest, remainingFreibetrag);
-    }
-    savings += savingsInterestNet;
-
-    let etf_contrib = 0;
-    let withdrawal = 0;
-    let tax_paid = savingsInterestTax;
-    let withdrawal_paid = 0;
-    let monthlyPayout = 0;
-
-    if (isSavingsPhase) {
-      const raiseFactor = Math.pow(1 + annualRaise, yearIdx);
-      const currMonthlySav = monthly_savings * raiseFactor;
-      const currMonthlyEtf = monthly_etf * raiseFactor;
-
-      if (savingsFull) {
-        etf_contrib = currMonthlyEtf + currMonthlySav;
-      } else {
-        savings += currMonthlySav;
-        etf_contrib = currMonthlyEtf;
-      }
-
-      if (savings > savings_target) {
-        const overflow = savings - savings_target;
-        savings = savings_target;
-        etf_contrib += overflow;
-        savingsFull = true;
-      }
-
-      if (etf_contrib > 0) {
-        const newShares = etf_contrib / currentEtfPrice;
-        etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
-        etfNetPurchasesThisYear += etf_contrib; // Nur Käufe für Vorabpauschale
-      }
-
-      // Sonderausgaben Ansparphase
-      const inSpecial = special_interval_years_savings > 0
-        && monthIdx % (special_interval_years_savings * MONTHS_PER_YEAR) === 0
-        && monthIdx > 0;
-
-      if (inSpecial) {
-        let specialAmount = special_payout_net_savings;
-        if (inflation_adjust_special_savings) {
-          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
-        }
-        let remaining = specialAmount;
-        withdrawal = remaining;
-
-        const extraCash = Math.max(0, savings - savings_target);
-        if (extraCash > 0) {
-          const use = Math.min(extraCash, remaining);
-          savings -= use;
-          remaining -= use;
-        }
-
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
-        remaining = sellResult.remaining;
-        tax_paid += sellResult.taxPaid;
-        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        // Verkaufserlöse NICHT abziehen - bereits versteuert!
-
-        if (remaining > 0.01) {
-          const draw = Math.min(savings, remaining);
-          savings -= draw;
-          remaining -= draw;
-          if (savings < savings_target) savingsFull = false;
-        }
-
-        if (remaining < 0) {
-          savings += Math.abs(remaining);
-          remaining = 0;
-        }
-
-        withdrawal_paid = withdrawal - Math.max(0, remaining);
-      }
-    } else {
-      // Entnahmephase
-      if (entnahmeStartTotal === null) {
-        const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
-        entnahmeStartTotal = savings + totalEtfShares * currentEtfPrice;
-        if (monthly_payout_percent != null && !payoutFromPercentDone) {
-          payoutValue = entnahmeStartTotal * (monthly_payout_percent / 100) / 12;
-          basePayoutValue = payoutValue;
-          payoutFromPercentDone = true;
-        } else if (payoutValue != null) {
-          basePayoutValue = payoutValue;
-        }
-      }
-
-      let currentPayout = payoutValue || 0;
-      if (inflation_adjust_withdrawal && basePayoutValue != null) {
-        const withdrawalYearIdx = yearIdx - savings_years;
-        currentPayout = basePayoutValue * Math.pow(1 + inflation_rate_pa / 100, withdrawalYearIdx);
-      }
-
-      if (withdrawal_min > 0 && currentPayout < withdrawal_min) {
-        currentPayout = withdrawal_min;
-      }
-      if (withdrawal_max > 0 && currentPayout > withdrawal_max) {
-        currentPayout = withdrawal_max;
-      }
-
-      // Kapitalerhalt-Modus: Entnahme reduzieren wenn Vermögen unter Schwelle fällt
-      if (capital_preservation_enabled && entnahmeStartTotal > 0) {
-        const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
-        const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
-        const thresholdValue = entnahmeStartTotal * (capital_preservation_threshold / 100);
-        const recoveryValue = entnahmeStartTotal * ((capital_preservation_threshold + capital_preservation_recovery) / 100);
-        
-        if (currentTotal < thresholdValue) {
-          capitalPreservationActive = true;
-        } else if (currentTotal >= recoveryValue) {
-          capitalPreservationActive = false;
-        }
-        
-        if (capitalPreservationActive) {
-          currentPayout = currentPayout * (1 - capital_preservation_reduction / 100);
-        }
-      }
-
-      monthlyPayout = currentPayout;
-      let needed_net = currentPayout;
-      if (special_interval_years_withdrawal > 0
-        && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
-        let specialAmount = special_payout_net_withdrawal;
-        if (inflation_adjust_special_withdrawal) {
-          specialAmount = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
-        }
-        needed_net += specialAmount;
-      }
-
-      if (needed_net > 0) {
-        let remaining = needed_net;
-        withdrawal = needed_net;
-
-        const extraCash = Math.max(0, savings - savings_target);
-        if (extraCash > 0) {
-          const use = Math.min(extraCash, remaining);
-          savings -= use;
-          remaining -= use;
-        }
-
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
-        remaining = sellResult.remaining;
-        tax_paid += sellResult.taxPaid;
-        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        // Verkaufserlöse NICHT abziehen - bereits versteuert!
-
-        if (remaining > 0.01) {
-          const draw = Math.min(savings, remaining);
-          savings -= draw;
-          remaining -= draw;
-        }
-
-        if (remaining < 0) {
-          savings += Math.abs(remaining);
-          remaining = 0;
-        }
-
-        withdrawal_paid = withdrawal - Math.max(0, remaining);
-      }
-    }
-
-    // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
-    // KORRIGIERT: Lot-basierte Berechnung mit Zeitanteilen und Cost-Basis-Erhöhung
-    let vorabpauschaleTax = 0;
-    let totalVorabpauschale = 0;
-    if (monthInYear === 12 && basiszins > 0) {
-      const yearStartMonth = yearIdx * MONTHS_PER_YEAR;
-      
-      for (const lot of etfLots) {
-        if (lot.amount <= 0) continue;
-        
-        const boughtThisYear = lot.monthIdx > yearStartMonth;
-        const basisertragBase = boughtThisYear 
-          ? lot.amount * lot.price 
-          : lot.amount * etfPriceAtYearStart;
-        
-        let zeitanteil = 1;
-        if (boughtThisYear) {
-          const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
-          zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
-        }
-        
-        const lotBasisertrag = basisertragBase * (basiszins / 100) * 0.7 * zeitanteil;
-        const lotValueYearEnd = lot.amount * currentEtfPrice;
-        const lotValueStart = boughtThisYear ? lot.amount * lot.price : lot.amount * etfPriceAtYearStart;
-        const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
-        const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
-        
-        if (lotVorabpauschale > 0) {
-          totalVorabpauschale += lotVorabpauschale;
-          lot.price += lotVorabpauschale / lot.amount;
-        }
-      }
-      
-      if (totalVorabpauschale > 0) {
-        const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
-        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-        const taxableAfterFreibetrag = Math.max(0, taxableVorabpauschale - remainingFreibetrag);
-        yearlyUsedFreibetrag += Math.min(taxableVorabpauschale, remainingFreibetrag);
-        
-        vorabpauschaleTax = taxableAfterFreibetrag * taxRate;
-        savings -= vorabpauschaleTax;
-        if (savings < 0) savings = 0;
-      }
-    }
-    tax_paid += vorabpauschaleTax;
-
-    const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
-    const etf_value = totalEtfShares * currentEtfPrice;
-    const total = savings + etf_value;
-
-    // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
-    const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
-    
-    // Portfolio-Gesamtrendite (gewichtet nach ETF/Cash-Anteil am Periodenstart)
-    // Berücksichtigt beide Asset-Klassen für akkurate SoRR-Analyse
-    const savingsReturnFactor = 1 + monthlySavingsRate; // Tagesgeld-Rendite als Faktor
-    let portfolioReturn = monthlyEtfReturn; // Default: nur ETF
-    if (totalPortfolioStart > 0) {
-      const etfWeight = totalEtfValueStart / totalPortfolioStart;
-      const cashWeight = 1 - etfWeight;
-      portfolioReturn = etfWeight * monthlyEtfReturn + cashWeight * savingsReturnFactor;
-    }
-    
-    history.push({
-      month: monthIdx,
-      year: yearIdx + 1,
-      phase: isSavingsPhase ? "Anspar" : "Entnahme",
-      savings,
-      etf: etf_value,
-      total,
-      total_real: total / cumulativeInflation,
-      withdrawal: withdrawal_paid,
-      withdrawal_real: withdrawal_paid / cumulativeInflation, // Für reale Statistiken
-      withdrawal_requested: withdrawal, // Für Shortfall-Analyse
-      shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt
-      monthly_payout: monthlyPayout,
-      monthly_payout_real: monthlyPayout / cumulativeInflation, // Für reale Statistiken
-      tax_paid,
-      etfReturn: monthlyEtfReturn, // Nur ETF-Rendite (für Vergleich)
-      portfolioReturn, // Portfolio-Gesamtrendite inkl. Cash (für SoRR-Analyse)
-      cumulative_inflation: cumulativeInflation, // Für inflationsbereinigte Schwellen
-    });
-  }
-
-  return history;
+  return simulate(params, annualVolatility);
 }
 
 // Berechnet Perzentil aus sortiertem Array
