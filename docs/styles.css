@@ -391,6 +391,41 @@ input:disabled {
   font-size: 14px;
 }
 
+/* Field Hint */
+.field-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Select-Elemente */
+select {
+  width: 100%;
+  padding: 10px 12px;
+  background: #0b162a;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+}
+
+select option {
+  background: #0f172a;
+  color: var(--text);
+}
+
 /* Statistik-Panel */
 .stats-panel {
   margin-top: 8px;
@@ -431,6 +466,68 @@ input:disabled {
 
 .stat-value--highlight {
   color: var(--accent);
+}
+
+/* Klickbare Stat-Karten */
+.stat-card--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.stat-card--clickable:hover {
+  border-color: var(--accent-2);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.stat-card--clickable:active {
+  transform: scale(0.98);
+}
+
+.stat-toggle-hint {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(56, 189, 248, 0.2);
+  border-radius: 4px;
+  color: var(--accent-2);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.stat-toggle-hint--active {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--accent);
+}
+
+/* Warnung bei Verm\u00f6gensaufbrauch */
+.stat-warning {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 20px;
+}
+
+.stat-warning:empty {
+  display: none;
+}
+
+.stat-warning--ok {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+.stat-warning--warning {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.stat-warning--critical {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
 }
 
 /* Druckansicht */

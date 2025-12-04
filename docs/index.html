@@ -55,6 +55,19 @@
               <span>Inflation p.a. (%)</span>
               <input type="number" step="0.1" id="inflation_rate" value="2.0">
             </label>
+            <label class="field">
+              <span>Sparerpauschbetrag (EUR)</span>
+              <input type="number" step="100" id="sparerpauschbetrag" value="1000">
+              <small class="field-hint">1000 EUR (Single) / 2000 EUR (Verheiratet)</small>
+            </label>
+            <label class="field">
+              <span>Kirchensteuer</span>
+              <select id="kirchensteuer">
+                <option value="keine">Keine Kirchensteuer</option>
+                <option value="8">8% (Bayern, Baden-W\u00fcrttemberg)</option>
+                <option value="9">9% (andere Bundesl\u00e4nder)</option>
+              </select>
+            </label>
           </div>
         </div>
 
@@ -153,7 +166,7 @@
             <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
             <button type="button" id="btn-export" class="btn btn--secondary">CSV Export</button>
           </div>
-          <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick" (jüngste Anteile zuerst) für geringere Steuerlast. Sparerpauschbetrag 1000 EUR/Jahr.</p>
+          <p class="hint">Hinweis: Simulation nutzt automatisch den \u201eDepot-Trick\u201c (j\u00fcngste Anteile zuerst) f\u00fcr geringere Steuerlast. Tagesgeldzinsen werden ebenfalls besteuert.</p>
         </div>
         <div id="message" class="message" role="alert" aria-live="polite"></div>
       </form>
@@ -223,20 +236,20 @@
             <span class="stat-label">Rendite gesamt</span>
             <span class="stat-value" id="stat-total-return">-</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Ø Entnahme/Monat (nominal)</span>
+          <div class="stat-card stat-card--clickable" id="stat-card-avg-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+            <span class="stat-label">Ø Entnahme/Monat (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-1">ohne Sonder</span></span>
             <span class="stat-value" id="stat-avg-withdrawal">-</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Ø Entnahme/Monat (real)</span>
+          <div class="stat-card stat-card--clickable" id="stat-card-avg-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+            <span class="stat-label">Ø Entnahme/Monat (real) <span class="stat-toggle-hint" id="stat-toggle-hint-2">ohne Sonder</span></span>
             <span class="stat-value stat-value--highlight" id="stat-avg-withdrawal-real">-</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Min/Max Entnahme (nominal)</span>
+          <div class="stat-card stat-card--clickable" id="stat-card-minmax-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+            <span class="stat-label">Min/Max Entnahme (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-3">ohne Sonder</span></span>
             <span class="stat-value" id="stat-minmax-withdrawal">-</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Min/Max Entnahme (real)</span>
+          <div class="stat-card stat-card--clickable" id="stat-card-minmax-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+            <span class="stat-label">Min/Max Entnahme (real) <span class="stat-toggle-hint" id="stat-toggle-hint-4">ohne Sonder</span></span>
             <span class="stat-value stat-value--highlight" id="stat-minmax-withdrawal-real">-</span>
           </div>
           <div class="stat-card">
@@ -248,6 +261,7 @@
             <span class="stat-value" id="stat-effective-rate">-</span>
           </div>
         </div>
+        <div id="stat-warning" class="stat-warning"></div>
       </div>
     </section>
   </main>

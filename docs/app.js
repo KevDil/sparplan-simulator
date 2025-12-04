@@ -1,6 +1,24 @@
-const TAX_RATE = 0.26375;
-const TEILFREISTELLUNG = 0.7;
-const SPARERPAUSCHBETRAG = 1000;
+const TAX_RATE_BASE = 0.25; // Kapitalertragsteuer
+const SOLI_RATE = 0.055; // Solidaritätszuschlag auf KESt
+const TEILFREISTELLUNG = 0.7; // 30% steuerfrei bei Aktienfonds
+const SPARERPAUSCHBETRAG_SINGLE = 1000;
+const SPARERPAUSCHBETRAG_VERHEIRATET = 2000;
+const KIRCHENSTEUER_SATZ_8 = 0.08; // Bayern, Baden-Württemberg
+const KIRCHENSTEUER_SATZ_9 = 0.09; // Restliche Bundesländer
+
+// Berechnet effektiven Steuersatz inkl. Kirchensteuer
+function calculateTaxRate(kirchensteuerSatz = 0) {
+  // Mit Kirchensteuer: KESt wird leicht reduziert (Sonderausgabenabzug)
+  // Formel: KESt_eff = KESt / (1 + KiSt_Satz)
+  if (kirchensteuerSatz > 0) {
+    const kestEffektiv = TAX_RATE_BASE / (1 + kirchensteuerSatz);
+    const soli = kestEffektiv * SOLI_RATE;
+    const kist = kestEffektiv * kirchensteuerSatz;
+    return kestEffektiv + soli + kist;
+  }
+  // Ohne Kirchensteuer: 25% + 5.5% Soli = 26.375%
+  return TAX_RATE_BASE * (1 + SOLI_RATE);
+}
 const MONTHS_PER_YEAR = 12;
 const INITIAL_ETF_PRICE = 100;
 const Y_AXIS_STEPS = 5;
@@ -18,6 +36,7 @@ const tableBody = document.querySelector("#year-table tbody");
 let graphState = null;
 let lastHistory = [];
 let lastParams = null;
+let includeSpecialWithdrawals = false; // Toggle: Sonderausgaben in Statistik einbeziehen
 
 // ============ UTILITY FUNCTIONS ============
 
@@ -87,7 +106,19 @@ function applyStoredValues() {
     special_payout_net_withdrawal: "special_withdraw",
     special_interval_years_withdrawal: "special_withdraw_interval",
     inflation_rate_pa: "inflation_rate",
+    sparerpauschbetrag: "sparerpauschbetrag",
   };
+  
+  // Select-Elemente (Dropdowns)
+  const selectFields = [
+    { key: "kirchensteuer", id: "kirchensteuer" },
+  ];
+  for (const { key, id } of selectFields) {
+    const el = document.getElementById(id);
+    if (el && stored[key] != null) {
+      el.value = stored[key];
+    }
+  }
   
   // Checkboxen separat behandeln
   const checkboxes = [
@@ -140,6 +171,8 @@ function getDefaultValues() {
     special_withdraw_interval: 10,
     inflation_adjust_special_withdrawal: true,
     inflation_rate: 2.0,
+    sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
+    kirchensteuer: "keine",
   };
 }
 
@@ -209,7 +242,7 @@ function exportToCsv(history, params = lastParams) {
 
 // ============ ETF SELLING (EXTRACTED) ============
 
-function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag) {
+function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
   
@@ -232,7 +265,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
       } else {
         const netFromFreibetrag = freibetragCoversShares * currentEtfPrice;
         const stillNeeded = remaining - netFromFreibetrag;
-        const taxPerShareFull = taxableGainPerShare * TAX_RATE;
+        const taxPerShareFull = taxableGainPerShare * taxRate;
         const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
         if (netPerShareTaxed <= 0) break;
         const additionalShares = stillNeeded / netPerShareTaxed;
@@ -246,7 +279,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
     const taxableAfterFreibetrag = Math.max(0, totalGain - Math.max(0, sparerpauschbetrag - freibetragUsed));
     freibetragUsed += Math.min(totalGain, sparerpauschbetrag - freibetragUsed);
-    const partTax = taxableAfterFreibetrag * TAX_RATE;
+    const partTax = taxableAfterFreibetrag * taxRate;
     const partNet = sharesToSell * currentEtfPrice - partTax;
     remaining -= partNet;
     taxPaid += partTax;
@@ -286,8 +319,15 @@ function simulate(params) {
     special_interval_years_withdrawal,
     inflation_adjust_special_withdrawal = true,
     inflation_rate_pa = 0,
-    sparerpauschbetrag = SPARERPAUSCHBETRAG,
+    sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
+    kirchensteuer = "keine",
   } = params;
+
+  // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
+  let kirchensteuerSatz = 0;
+  if (kirchensteuer === "8") kirchensteuerSatz = KIRCHENSTEUER_SATZ_8;
+  else if (kirchensteuer === "9") kirchensteuerSatz = KIRCHENSTEUER_SATZ_9;
+  const taxRate = calculateTaxRate(kirchensteuerSatz);
 
   const history = [];
   let savings = start_savings;
@@ -337,13 +377,24 @@ function simulate(params) {
     const etfGrowth = totalEtfValueStart * monthlyEtfRate;
 
     const savingsInterest = savings * monthlySavingsRate;
-    savings += savingsInterest;
+    
+    // Tagesgeldzinsen besteuern (Freibetrag berücksichtigen)
+    let savingsInterestNet = savingsInterest;
+    let savingsInterestTax = 0;
+    if (savingsInterest > 0) {
+      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
+      const taxableInterest = Math.max(0, savingsInterest - remainingFreibetrag);
+      savingsInterestTax = taxableInterest * taxRate;
+      savingsInterestNet = savingsInterest - savingsInterestTax;
+      yearlyUsedFreibetrag += Math.min(savingsInterest, remainingFreibetrag);
+    }
+    savings += savingsInterestNet;
 
     let savings_contrib = 0;
     let etf_contrib = 0;
     let overflow = 0;
     let withdrawal = 0;
-    let tax_paid = 0;
+    let tax_paid = savingsInterestTax; // Startet mit TG-Zinsen-Steuer
     let withdrawal_paid = 0;
     let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
 
@@ -395,7 +446,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -474,7 +525,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -599,38 +650,47 @@ function renderStats(history, params) {
   const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
   document.getElementById("stat-total-return").textContent = formatCurrency(totalReturn);
 
-  // Entnahme-Statistiken
-  // Für Durchschnitt: Gesamtentnahmen (inkl. Sonderausgaben)
-  const withdrawals = entnahmeRows.filter(r => r.withdrawal > 0).map(r => r.withdrawal);
-  const withdrawalsReal = entnahmeRows.filter(r => r.withdrawal_real > 0).map(r => r.withdrawal_real);
+  // Entnahme-Statistiken (Toggle: mit/ohne Sonderausgaben)
+  // Mit Sonderausgaben: withdrawal (Gesamtentnahme inkl. Sonder)
+  // Ohne Sonderausgaben: monthly_payout (nur regul\u00e4re monatliche Entnahme)
+  const useWithdrawals = includeSpecialWithdrawals;
   
-  // Für Min/Max: Nur reguläre monatliche Entnahmen (ohne Sonderausgaben)
-  const monthlyPayouts = entnahmeRows.filter(r => r.monthly_payout > 0).map(r => r.monthly_payout);
-  const monthlyPayoutsReal = entnahmeRows.filter(r => r.monthly_payout_real > 0).map(r => r.monthly_payout_real);
+  const displayValues = entnahmeRows
+    .filter(r => useWithdrawals ? r.withdrawal > 0 : r.monthly_payout > 0)
+    .map(r => useWithdrawals ? r.withdrawal : r.monthly_payout);
+  const displayValuesReal = entnahmeRows
+    .filter(r => useWithdrawals ? r.withdrawal_real > 0 : r.monthly_payout_real > 0)
+    .map(r => useWithdrawals ? r.withdrawal_real : r.monthly_payout_real);
   
-  if (withdrawals.length > 0) {
-    const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
+  // Toggle-Hinweise aktualisieren
+  const hintText = useWithdrawals ? "mit Sonder" : "ohne Sonder";
+  const hintClass = useWithdrawals ? "stat-toggle-hint stat-toggle-hint--active" : "stat-toggle-hint";
+  for (let i = 1; i <= 4; i++) {
+    const hint = document.getElementById(`stat-toggle-hint-${i}`);
+    if (hint) {
+      hint.textContent = hintText;
+      hint.className = hintClass;
+    }
+  }
+  
+  if (displayValues.length > 0) {
+    const avgWithdrawal = displayValues.reduce((a, b) => a + b, 0) / displayValues.length;
     document.getElementById("stat-avg-withdrawal").textContent = formatCurrency(avgWithdrawal);
     
     // Reale Kaufkraft der Entnahmen (Durchschnitt)
-    const avgWithdrawalReal = withdrawalsReal.reduce((a, b) => a + b, 0) / withdrawalsReal.length;
+    const avgWithdrawalReal = displayValuesReal.reduce((a, b) => a + b, 0) / displayValuesReal.length;
     document.getElementById("stat-avg-withdrawal-real").textContent = formatCurrency(avgWithdrawalReal);
     
-    // Min/Max nur für reguläre monatliche Entnahmen
-    if (monthlyPayouts.length > 0) {
-      const minMonthly = Math.min(...monthlyPayouts);
-      const maxMonthly = Math.max(...monthlyPayouts);
-      document.getElementById("stat-minmax-withdrawal").textContent = 
-        `${formatCurrency(minMonthly)} / ${formatCurrency(maxMonthly)}`;
-      
-      const minMonthlyReal = Math.min(...monthlyPayoutsReal);
-      const maxMonthlyReal = Math.max(...monthlyPayoutsReal);
-      document.getElementById("stat-minmax-withdrawal-real").textContent = 
-        `${formatCurrency(minMonthlyReal)} / ${formatCurrency(maxMonthlyReal)}`;
-    } else {
-      document.getElementById("stat-minmax-withdrawal").textContent = "-";
-      document.getElementById("stat-minmax-withdrawal-real").textContent = "-";
-    }
+    // Min/Max
+    const minVal = Math.min(...displayValues);
+    const maxVal = Math.max(...displayValues);
+    document.getElementById("stat-minmax-withdrawal").textContent = 
+      `${formatCurrency(minVal)} / ${formatCurrency(maxVal)}`;
+    
+    const minValReal = Math.min(...displayValuesReal);
+    const maxValReal = Math.max(...displayValuesReal);
+    document.getElementById("stat-minmax-withdrawal-real").textContent = 
+      `${formatCurrency(minValReal)} / ${formatCurrency(maxValReal)}`;
   } else {
     document.getElementById("stat-avg-withdrawal").textContent = "-";
     document.getElementById("stat-minmax-withdrawal").textContent = "-";
@@ -642,7 +702,7 @@ function renderStats(history, params) {
   const totalTax = history.reduce((sum, r) => sum + (r.tax_paid || 0), 0);
   document.getElementById("stat-total-tax").textContent = formatCurrency(totalTax);
 
-  // Effektive Entnahmerate (bezogen auf Startvermögen Entnahmephase)
+  // Effektive Entnahmerate (bezogen auf Startverm\u00f6gen Entnahmephase)
   if (entnahmeRows.length > 0 && withdrawals.length > 0) {
     const entnahmeStartIdx = ansparRows.length;
     const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
@@ -653,6 +713,46 @@ function renderStats(history, params) {
   } else {
     document.getElementById("stat-effective-rate").textContent = "-";
   }
+
+  // Warnung bei Verm\u00f6gensaufbrauch
+  const warningEl = document.getElementById("stat-warning");
+  if (warningEl) {
+    // Pr\u00fcfe ob Verm\u00f6gen in der Entnahmephase stark gesunken oder aufgebraucht wurde
+    if (entnahmeRows.length > 0) {
+      const entnahmeStartIdx = ansparRows.length;
+      const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
+      const startCapital = entnahmeStartRow.total;
+      const endCapital = lastRow.total;
+      const capitalRatio = startCapital > 0 ? endCapital / startCapital : 1;
+      
+      // Pr\u00fcfe ob Entnahmen nicht vollst\u00e4ndig bedient werden konnten
+      const shortfallMonths = entnahmeRows.filter(r => {
+        const requested = r.monthly_payout || 0;
+        const paid = r.withdrawal || 0;
+        return requested > 0 && paid < requested * 0.99; // 1% Toleranz
+      }).length;
+      
+      if (endCapital < 100) {
+        warningEl.textContent = "\u26a0\ufe0f Verm\u00f6gen vollst\u00e4ndig aufgebraucht! Entnahmen k\u00f6nnen nicht gedeckt werden.";
+        warningEl.className = "stat-warning stat-warning--critical";
+      } else if (capitalRatio < 0.1) {
+        warningEl.textContent = "\u26a0\ufe0f Verm\u00f6gen fast aufgebraucht (< 10% des Startverm\u00f6gens). Entnahmerate pr\u00fcfen!";
+        warningEl.className = "stat-warning stat-warning--critical";
+      } else if (capitalRatio < 0.3) {
+        warningEl.textContent = "\u26a0 Verm\u00f6gen stark reduziert (< 30% des Startverm\u00f6gens). Evtl. Entnahme anpassen.";
+        warningEl.className = "stat-warning stat-warning--warning";
+      } else if (shortfallMonths > 0) {
+        warningEl.textContent = `\u26a0 In ${shortfallMonths} Monaten konnte die gew\u00fcnschte Entnahme nicht vollst\u00e4ndig bedient werden.`;
+        warningEl.className = "stat-warning stat-warning--warning";
+      } else {
+        warningEl.textContent = "\u2705 Verm\u00f6gen reicht f\u00fcr den gew\u00e4hlten Entnahmezeitraum.";
+        warningEl.className = "stat-warning stat-warning--ok";
+      }
+    } else {
+      warningEl.textContent = "";
+      warningEl.className = "stat-warning";
+    }
+  }
 }
 
 function renderGraph(history) {
@@ -660,8 +760,12 @@ function renderGraph(history) {
   const dpr = window.devicePixelRatio || 1;
   const width = graphCanvas.clientWidth || graphCanvas.parentElement.clientWidth || 800;
   const height = graphCanvas.clientHeight || 320;
+  
+  // HiDPI-Fix: Canvas-Gr\u00f6\u00dfe und CSS-Gr\u00f6\u00dfe korrekt setzen
   graphCanvas.width = width * dpr;
   graphCanvas.height = height * dpr;
+  graphCanvas.style.width = `${width}px`;
+  graphCanvas.style.height = `${height}px`;
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
 
@@ -858,6 +962,8 @@ form.addEventListener("submit", (e) => {
       special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
       inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+      sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+      kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       rent_mode: mode,
     };
 
@@ -889,6 +995,19 @@ graphCanvas.addEventListener("mousemove", handleHover);
 graphCanvas.addEventListener("mouseleave", hideTooltip);
 window.addEventListener("resize", () => {
   if (lastHistory.length) renderGraph(lastHistory);
+});
+
+// Toggle f\u00fcr Entnahme-Statistiken (mit/ohne Sonderausgaben)
+function toggleWithdrawalStats() {
+  includeSpecialWithdrawals = !includeSpecialWithdrawals;
+  if (lastHistory.length && lastParams) {
+    renderStats(lastHistory, lastParams);
+  }
+}
+
+// Event-Listener f\u00fcr klickbare Stat-Karten
+["stat-card-avg-nominal", "stat-card-avg-real", "stat-card-minmax-nominal", "stat-card-minmax-real"].forEach(id => {
+  document.getElementById(id)?.addEventListener("click", toggleWithdrawalStats);
 });
 
 // Gespeicherte Werte laden
