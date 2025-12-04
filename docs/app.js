@@ -702,12 +702,12 @@ function renderStats(history, params) {
   const totalTax = history.reduce((sum, r) => sum + (r.tax_paid || 0), 0);
   document.getElementById("stat-total-tax").textContent = formatCurrency(totalTax);
 
-  // Effektive Entnahmerate (bezogen auf Startverm\u00f6gen Entnahmephase)
-  if (entnahmeRows.length > 0 && withdrawals.length > 0) {
+  // Effektive Entnahmerate (bezogen auf Startvermögen Entnahmephase)
+  if (entnahmeRows.length > 0 && displayValues.length > 0) {
     const entnahmeStartIdx = ansparRows.length;
     const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
     const startCapital = entnahmeStartRow.total;
-    const avgAnnualWithdrawal = (withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length) * 12;
+    const avgAnnualWithdrawal = (displayValues.reduce((a, b) => a + b, 0) / displayValues.length) * 12;
     const effectiveRate = startCapital > 0 ? (avgAnnualWithdrawal / startCapital * 100) : 0;
     document.getElementById("stat-effective-rate").textContent = `${nf2.format(effectiveRate)} % p.a.`;
   } else {
@@ -1013,3 +1013,834 @@ function toggleWithdrawalStats() {
 // Gespeicherte Werte laden
 applyStoredValues();
 updateRentModeFields();
+
+// ============ INFO MODAL ============
+
+const infoModal = document.getElementById("info-modal");
+const btnInfo = document.getElementById("btn-info");
+const modalClose = document.getElementById("modal-close");
+
+function openInfoModal() {
+  infoModal?.classList.add("active");
+  document.body.style.overflow = "hidden";
+}
+
+function closeInfoModal() {
+  infoModal?.classList.remove("active");
+  document.body.style.overflow = "";
+}
+
+btnInfo?.addEventListener("click", openInfoModal);
+modalClose?.addEventListener("click", closeInfoModal);
+
+// Schließen bei Klick außerhalb des Modals
+infoModal?.addEventListener("click", (e) => {
+  if (e.target === infoModal) closeInfoModal();
+});
+
+// Schließen mit Escape-Taste
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && infoModal?.classList.contains("active")) {
+    closeInfoModal();
+  }
+});
+
+// ============ TAB SYSTEM ============
+
+function initTabs() {
+  const tabs = document.querySelectorAll(".tab");
+  const tabContents = document.querySelectorAll(".tab-content");
+  
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const targetId = tab.dataset.tab;
+      
+      // Deactivate all tabs
+      tabs.forEach(t => t.classList.remove("tab--active"));
+      tabContents.forEach(c => c.classList.remove("tab-content--active"));
+      
+      // Activate clicked tab
+      tab.classList.add("tab--active");
+      const targetContent = document.getElementById(`tab-${targetId}`);
+      if (targetContent) {
+        targetContent.classList.add("tab-content--active");
+      }
+      
+      // Re-render graphs when switching tabs (for correct sizing)
+      if (targetId === "standard" && lastHistory.length) {
+        setTimeout(() => renderGraph(lastHistory), 10);
+      } else if (targetId === "monte-carlo" && lastMcResults) {
+        setTimeout(() => renderMonteCarloGraph(lastMcResults), 10);
+      }
+    });
+  });
+}
+
+function switchToTab(tabName) {
+  const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  if (tab) tab.click();
+}
+
+initTabs();
+
+// ============ MONTE-CARLO SIMULATION ============
+
+const mcGraphCanvas = document.getElementById("mc-graph");
+const mcResultsEl = document.getElementById("mc-results");
+const mcEmptyStateEl = document.getElementById("mc-empty-state");
+const mcProgressEl = document.getElementById("mc-progress");
+const mcProgressTextEl = document.getElementById("mc-progress-text");
+const mcBadgeEl = document.getElementById("mc-badge");
+
+let mcGraphState = null;
+let lastMcResults = null;
+
+// Box-Muller Transform für Normalverteilung
+function randomNormal(mean = 0, stdDev = 1) {
+  let u1, u2;
+  do {
+    u1 = Math.random();
+    u2 = Math.random();
+  } while (u1 === 0);
+  
+  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+  return z0 * stdDev + mean;
+}
+
+// Konvertiert jährliche Volatilität zu monatlicher
+function toMonthlyVolatility(annualVolatility) {
+  return annualVolatility / Math.sqrt(12);
+}
+
+// Modifizierte Simulation mit stochastischer ETF-Rendite
+function simulateStochastic(params, annualVolatility) {
+  const {
+    start_savings,
+    start_etf,
+    monthly_savings,
+    monthly_etf,
+    savings_rate_pa,
+    etf_rate_pa,
+    etf_ter_pa = 0,
+    savings_target,
+    annual_raise_percent,
+    savings_years,
+    withdrawal_years,
+    monthly_payout_net,
+    monthly_payout_percent,
+    withdrawal_min = 0,
+    withdrawal_max = 0,
+    inflation_adjust_withdrawal = true,
+    special_payout_net_savings,
+    special_interval_years_savings,
+    inflation_adjust_special_savings = true,
+    special_payout_net_withdrawal,
+    special_interval_years_withdrawal,
+    inflation_adjust_special_withdrawal = true,
+    inflation_rate_pa = 0,
+    sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
+    kirchensteuer = "keine",
+  } = params;
+
+  let kirchensteuerSatz = 0;
+  if (kirchensteuer === "8") kirchensteuerSatz = KIRCHENSTEUER_SATZ_8;
+  else if (kirchensteuer === "9") kirchensteuerSatz = KIRCHENSTEUER_SATZ_9;
+  const taxRate = calculateTaxRate(kirchensteuerSatz);
+
+  const history = [];
+  let savings = start_savings;
+  let currentEtfPrice = INITIAL_ETF_PRICE;
+  const etfLots = [];
+  if (start_etf > 0) {
+    etfLots.push({ amount: start_etf / currentEtfPrice, price: currentEtfPrice, monthIdx: 0 });
+  }
+
+  const effectiveEtfRate = etf_rate_pa - etf_ter_pa;
+  const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
+  const monthlyEtfMean = toMonthlyRate(effectiveEtfRate);
+  const monthlyVolatility = toMonthlyVolatility(annualVolatility / 100);
+  const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
+  const annualRaise = annual_raise_percent / 100;
+  const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
+
+  let savingsFull = savings >= savings_target;
+  let yearlyUsedFreibetrag = 0;
+  let currentTaxYear = 0;
+  let payoutFromPercentDone = false;
+  let payoutValue = monthly_payout_net;
+  let entnahmeStartTotal = null;
+  let basePayoutValue = null;
+  let cumulativeInflation = 1;
+
+  for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
+    const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
+    const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
+    
+    cumulativeInflation *= (1 + monthlyInflationRate);
+    const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
+
+    if (yearIdx !== currentTaxYear) {
+      currentTaxYear = yearIdx;
+      yearlyUsedFreibetrag = 0;
+    }
+
+    // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
+    const monthlyEtfReturn = randomNormal(monthlyEtfMean, monthlyVolatility);
+    currentEtfPrice *= (1 + monthlyEtfReturn);
+    
+    // Verhindere negative Preise
+    if (currentEtfPrice < 0.01) currentEtfPrice = 0.01;
+
+    const savingsInterest = savings * monthlySavingsRate;
+    let savingsInterestNet = savingsInterest;
+    let savingsInterestTax = 0;
+    if (savingsInterest > 0) {
+      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
+      const taxableInterest = Math.max(0, savingsInterest - remainingFreibetrag);
+      savingsInterestTax = taxableInterest * taxRate;
+      savingsInterestNet = savingsInterest - savingsInterestTax;
+      yearlyUsedFreibetrag += Math.min(savingsInterest, remainingFreibetrag);
+    }
+    savings += savingsInterestNet;
+
+    let etf_contrib = 0;
+    let withdrawal = 0;
+    let tax_paid = savingsInterestTax;
+    let withdrawal_paid = 0;
+    let monthlyPayout = 0;
+
+    if (isSavingsPhase) {
+      const raiseFactor = Math.pow(1 + annualRaise, yearIdx);
+      const currMonthlySav = monthly_savings * raiseFactor;
+      const currMonthlyEtf = monthly_etf * raiseFactor;
+
+      if (savingsFull) {
+        etf_contrib = currMonthlyEtf + currMonthlySav;
+      } else {
+        savings += currMonthlySav;
+        etf_contrib = currMonthlyEtf;
+      }
+
+      if (savings > savings_target) {
+        const overflow = savings - savings_target;
+        savings = savings_target;
+        etf_contrib += overflow;
+        savingsFull = true;
+      }
+
+      if (etf_contrib > 0) {
+        const newShares = etf_contrib / currentEtfPrice;
+        etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
+      }
+
+      // Sonderausgaben Ansparphase
+      const inSpecial = special_interval_years_savings > 0
+        && monthIdx % (special_interval_years_savings * MONTHS_PER_YEAR) === 0
+        && monthIdx > 0;
+
+      if (inSpecial) {
+        let specialAmount = special_payout_net_savings;
+        if (inflation_adjust_special_savings) {
+          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+        }
+        let remaining = specialAmount;
+        withdrawal = remaining;
+
+        const extraCash = Math.max(0, savings - savings_target);
+        if (extraCash > 0) {
+          const use = Math.min(extraCash, remaining);
+          savings -= use;
+          remaining -= use;
+        }
+
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        remaining = sellResult.remaining;
+        tax_paid += sellResult.taxPaid;
+        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+
+        if (remaining > 0.01) {
+          const draw = Math.min(savings, remaining);
+          savings -= draw;
+          remaining -= draw;
+          if (savings < savings_target) savingsFull = false;
+        }
+
+        if (remaining < 0) {
+          savings += Math.abs(remaining);
+          remaining = 0;
+        }
+
+        withdrawal_paid = withdrawal - Math.max(0, remaining);
+      }
+    } else {
+      // Entnahmephase
+      if (entnahmeStartTotal === null) {
+        const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
+        entnahmeStartTotal = savings + totalEtfShares * currentEtfPrice;
+        if (monthly_payout_percent != null && !payoutFromPercentDone) {
+          payoutValue = entnahmeStartTotal * (monthly_payout_percent / 100) / 12;
+          basePayoutValue = payoutValue;
+          payoutFromPercentDone = true;
+        } else if (payoutValue != null) {
+          basePayoutValue = payoutValue;
+        }
+      }
+
+      let currentPayout = payoutValue || 0;
+      if (inflation_adjust_withdrawal && basePayoutValue != null) {
+        const withdrawalYearIdx = yearIdx - savings_years;
+        currentPayout = basePayoutValue * Math.pow(1 + inflation_rate_pa / 100, withdrawalYearIdx);
+      }
+
+      if (withdrawal_min > 0 && currentPayout < withdrawal_min) {
+        currentPayout = withdrawal_min;
+      }
+      if (withdrawal_max > 0 && currentPayout > withdrawal_max) {
+        currentPayout = withdrawal_max;
+      }
+
+      monthlyPayout = currentPayout;
+      let needed_net = currentPayout;
+      if (special_interval_years_withdrawal > 0
+        && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
+        let specialAmount = special_payout_net_withdrawal;
+        if (inflation_adjust_special_withdrawal) {
+          specialAmount = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+        }
+        needed_net += specialAmount;
+      }
+
+      if (needed_net > 0) {
+        let remaining = needed_net;
+        withdrawal = needed_net;
+
+        const extraCash = Math.max(0, savings - savings_target);
+        if (extraCash > 0) {
+          const use = Math.min(extraCash, remaining);
+          savings -= use;
+          remaining -= use;
+        }
+
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        remaining = sellResult.remaining;
+        tax_paid += sellResult.taxPaid;
+        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+
+        if (remaining > 0.01) {
+          const draw = Math.min(savings, remaining);
+          savings -= draw;
+          remaining -= draw;
+        }
+
+        if (remaining < 0) {
+          savings += Math.abs(remaining);
+          remaining = 0;
+        }
+
+        withdrawal_paid = withdrawal - Math.max(0, remaining);
+      }
+    }
+
+    const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
+    const etf_value = totalEtfShares * currentEtfPrice;
+    const total = savings + etf_value;
+
+    history.push({
+      month: monthIdx,
+      year: yearIdx + 1,
+      phase: isSavingsPhase ? "Anspar" : "Entnahme",
+      savings,
+      etf: etf_value,
+      total,
+      total_real: total / cumulativeInflation,
+      withdrawal: withdrawal_paid,
+      monthly_payout: monthlyPayout,
+      tax_paid,
+    });
+  }
+
+  return history;
+}
+
+// Berechnet Perzentil aus sortiertem Array
+function percentile(sortedArr, p) {
+  if (sortedArr.length === 0) return 0;
+  const idx = (p / 100) * (sortedArr.length - 1);
+  const lower = Math.floor(idx);
+  const upper = Math.ceil(idx);
+  if (lower === upper) return sortedArr[lower];
+  return sortedArr[lower] * (upper - idx) + sortedArr[upper] * (idx - lower);
+}
+
+// Hauptfunktion für Monte-Carlo-Simulation
+async function runMonteCarloSimulation(params, iterations, volatility, showIndividual) {
+  // Switch to Monte-Carlo tab and show results
+  switchToTab("monte-carlo");
+  
+  if (mcEmptyStateEl) mcEmptyStateEl.style.display = "none";
+  if (mcResultsEl) mcResultsEl.style.display = "block";
+  
+  mcProgressEl.value = 0;
+  mcProgressTextEl.textContent = "Starte...";
+  
+  const allHistories = [];
+  const batchSize = 50; // Verarbeite in Batches für UI-Updates
+  
+  for (let i = 0; i < iterations; i += batchSize) {
+    const batchEnd = Math.min(i + batchSize, iterations);
+    
+    for (let j = i; j < batchEnd; j++) {
+      const history = simulateStochastic(params, volatility);
+      allHistories.push(history);
+    }
+    
+    // UI Update
+    const progress = Math.round((batchEnd / iterations) * 100);
+    mcProgressEl.value = progress;
+    mcProgressTextEl.textContent = `${batchEnd} / ${iterations} (${progress}%)`;
+    
+    // Yield to browser
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  
+  mcProgressTextEl.textContent = "Analysiere Ergebnisse...";
+  await new Promise(resolve => setTimeout(resolve, 0));
+  
+  // Analysiere Ergebnisse
+  const results = analyzeMonteCarloResults(allHistories, params);
+  results.showIndividual = showIndividual;
+  results.allHistories = showIndividual ? allHistories.slice(0, 50) : [];
+  
+  lastMcResults = results;
+  
+  renderMonteCarloStats(results);
+  renderMonteCarloGraph(results);
+  
+  mcProgressTextEl.textContent = "Fertig!";
+  
+  return results;
+}
+
+function analyzeMonteCarloResults(allHistories, params) {
+  const numMonths = allHistories[0]?.length || 0;
+  const numSims = allHistories.length;
+  const savingsMonths = params.savings_years * MONTHS_PER_YEAR;
+  
+  // Sammle Endvermögen
+  const finalTotals = allHistories.map(h => h[h.length - 1]?.total || 0).sort((a, b) => a - b);
+  const finalTotalsReal = allHistories.map(h => h[h.length - 1]?.total_real || 0).sort((a, b) => a - b);
+  
+  // Vermögen bei Rentenbeginn (Index = savingsMonths - 1, da 0-basiert)
+  const retirementIdx = Math.min(savingsMonths - 1, numMonths - 1);
+  const retirementTotals = allHistories.map(h => h[retirementIdx]?.total || 0).sort((a, b) => a - b);
+  const retirementMedian = percentile(retirementTotals, 50);
+  
+  // Erfolgsrate: Vermögen > 100 € am Ende
+  const successCount = finalTotals.filter(t => t > 100).length;
+  const successRate = (successCount / numSims) * 100;
+  
+  // Kapitalerhalt: Endvermögen >= Vermögen bei Rentenbeginn
+  let capitalPreservationCount = 0;
+  for (let i = 0; i < numSims; i++) {
+    const retirementWealth = allHistories[i][retirementIdx]?.total || 0;
+    const endWealth = allHistories[i][numMonths - 1]?.total || 0;
+    if (endWealth >= retirementWealth) capitalPreservationCount++;
+  }
+  const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
+  
+  // Pleite-Risiko: Vermögen fällt unter 10.000 € (irgendwann in der Entnahmephase)
+  let ruinCount = 0;
+  for (const history of allHistories) {
+    for (let m = savingsMonths; m < numMonths; m++) {
+      if ((history[m]?.total || 0) < 10000) {
+        ruinCount++;
+        break;
+      }
+    }
+  }
+  const ruinProbability = (ruinCount / numSims) * 100;
+  
+  // Durchschnittliches Endvermögen
+  const meanEnd = finalTotals.reduce((a, b) => a + b, 0) / numSims;
+  
+  // Perzentile pro Monat berechnen
+  const percentiles = {
+    p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
+  };
+  
+  for (let month = 0; month < numMonths; month++) {
+    const monthTotals = allHistories.map(h => h[month]?.total || 0).sort((a, b) => a - b);
+    
+    percentiles.p5.push(percentile(monthTotals, 5));
+    percentiles.p10.push(percentile(monthTotals, 10));
+    percentiles.p25.push(percentile(monthTotals, 25));
+    percentiles.p50.push(percentile(monthTotals, 50));
+    percentiles.p75.push(percentile(monthTotals, 75));
+    percentiles.p90.push(percentile(monthTotals, 90));
+    percentiles.p95.push(percentile(monthTotals, 95));
+  }
+  
+  // Jahre-Array für X-Achse
+  const months = allHistories[0]?.map(h => h.month) || [];
+  
+  return {
+    iterations: numSims,
+    successRate,
+    finalTotals,
+    finalTotalsReal,
+    percentiles,
+    months,
+    medianEnd: percentile(finalTotals, 50),
+    p10End: percentile(finalTotals, 10),
+    p90End: percentile(finalTotals, 90),
+    p5End: percentile(finalTotals, 5),
+    p95End: percentile(finalTotals, 95),
+    savingsYears: params.savings_years,
+    // Zusätzliche Metriken
+    retirementMedian,
+    capitalPreservationRate,
+    ruinProbability,
+    meanEnd,
+  };
+}
+
+function renderMonteCarloStats(results) {
+  const successEl = document.getElementById("mc-success-rate");
+  successEl.textContent = `${results.successRate.toFixed(1)}%`;
+  
+  document.getElementById("mc-median-end").textContent = formatCurrency(results.medianEnd);
+  document.getElementById("mc-range-end").textContent = 
+    `${formatCurrency(results.p10End)} - ${formatCurrency(results.p90End)}`;
+  document.getElementById("mc-worst-case").textContent = formatCurrency(results.p5End);
+  document.getElementById("mc-best-case").textContent = formatCurrency(results.p95End);
+  document.getElementById("mc-iterations-done").textContent = nf0.format(results.iterations);
+  
+  // Zusätzliche Metriken
+  document.getElementById("mc-retirement-wealth").textContent = formatCurrency(results.retirementMedian);
+  document.getElementById("mc-capital-preservation").textContent = `${results.capitalPreservationRate.toFixed(1)}%`;
+  document.getElementById("mc-mean-end").textContent = formatCurrency(results.meanEnd);
+  
+  // Pleite-Risiko mit Farbcodierung
+  const ruinEl = document.getElementById("mc-ruin-probability");
+  ruinEl.textContent = `${results.ruinProbability.toFixed(1)}%`;
+  ruinEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+  if (results.ruinProbability <= 5) {
+    ruinEl.classList.add("stat-value--success");
+  } else if (results.ruinProbability <= 15) {
+    ruinEl.classList.add("stat-value--warning");
+  } else {
+    ruinEl.classList.add("stat-value--danger");
+  }
+  
+  // Kapitalerhalt mit Farbcodierung
+  const preserveEl = document.getElementById("mc-capital-preservation");
+  preserveEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+  if (results.capitalPreservationRate >= 50) {
+    preserveEl.classList.add("stat-value--success");
+  } else if (results.capitalPreservationRate >= 25) {
+    preserveEl.classList.add("stat-value--warning");
+  }
+  
+  // Farbige Erfolgsrate (für neue Highlight-Karte)
+  successEl.classList.remove("success-high", "success-medium", "success-low");
+  if (results.successRate >= 95) {
+    successEl.classList.add("success-high");
+  } else if (results.successRate >= 80) {
+    successEl.classList.add("success-medium");
+  } else {
+    successEl.classList.add("success-low");
+  }
+  
+  // Badge im Tab anzeigen
+  if (mcBadgeEl) {
+    mcBadgeEl.style.display = "inline";
+  }
+}
+
+function renderMonteCarloGraph(results) {
+  if (!mcGraphCanvas) return;
+  
+  const ctx = mcGraphCanvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const width = mcGraphCanvas.clientWidth || mcGraphCanvas.parentElement?.clientWidth || 800;
+  const height = mcGraphCanvas.clientHeight || 320;
+  
+  mcGraphCanvas.width = width * dpr;
+  mcGraphCanvas.height = height * dpr;
+  mcGraphCanvas.style.width = `${width}px`;
+  mcGraphCanvas.style.height = `${height}px`;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+  
+  const { percentiles, months, savingsYears } = results;
+  if (!months.length) return;
+  
+  const padX = 60;
+  const padY = 50;
+  const maxVal = Math.max(1, ...percentiles.p95);
+  const xDenom = Math.max(months.length - 1, 1);
+  
+  const toXY = (idx, val) => {
+    const x = padX + (idx / xDenom) * (width - 2 * padX);
+    const y = height - padY - (val / maxVal) * (height - 2 * padY);
+    return [x, y];
+  };
+  
+  // Achsen
+  ctx.strokeStyle = "#8b96a9";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padX, height - padY);
+  ctx.lineTo(width - padX, height - padY);
+  ctx.moveTo(padX, height - padY);
+  ctx.lineTo(padX, padY);
+  ctx.stroke();
+  
+  // Y Hilfslinien
+  ctx.font = "12px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#94a3b8";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= Y_AXIS_STEPS; i += 1) {
+    const val = maxVal * (i / Y_AXIS_STEPS);
+    const [, y] = toXY(0, val);
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(width - padX, y);
+    ctx.stroke();
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText(`${Math.round(val / 1000)}k`, padX - 8, y);
+  }
+  
+  // X Labels (Jahre)
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const lastYear = Math.ceil(months.length / MONTHS_PER_YEAR);
+  for (let year = 1; year <= lastYear; year += 1) {
+    const idx = Math.min(year * MONTHS_PER_YEAR - 1, months.length - 1);
+    const [x] = toXY(idx, 0);
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.beginPath();
+    ctx.moveTo(x, height - padY);
+    ctx.lineTo(x, height - padY + 6);
+    ctx.stroke();
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText(String(year), x, height - padY + 8);
+  }
+  
+  // Füllfunktion für Bänder
+  const fillBand = (lower, upper, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    
+    // Obere Linie
+    for (let i = 0; i < months.length; i++) {
+      const [x, y] = toXY(i, upper[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    
+    // Untere Linie (rückwärts)
+    for (let i = months.length - 1; i >= 0; i--) {
+      const [x, y] = toXY(i, lower[i]);
+      ctx.lineTo(x, y);
+    }
+    
+    ctx.closePath();
+    ctx.fill();
+  };
+  
+  // Zeichne Bänder (von außen nach innen)
+  fillBand(percentiles.p10, percentiles.p90, "rgba(99, 102, 241, 0.15)"); // 80% Band
+  fillBand(percentiles.p25, percentiles.p75, "rgba(99, 102, 241, 0.25)"); // 50% Band
+  
+  // Individuelle Pfade (falls aktiviert)
+  if (results.showIndividual && results.allHistories?.length) {
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+    ctx.lineWidth = 0.5;
+    
+    for (const history of results.allHistories) {
+      ctx.beginPath();
+      history.forEach((row, i) => {
+        const [x, y] = toXY(i, row.total);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+  }
+  
+  // Median-Linie
+  ctx.strokeStyle = "#f59e0b";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  percentiles.p50.forEach((val, i) => {
+    const [x, y] = toXY(i, val);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  
+  // 5%/95% Linien (gestrichelt)
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = "rgba(239, 68, 68, 0.6)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  percentiles.p5.forEach((val, i) => {
+    const [x, y] = toXY(i, val);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  
+  ctx.strokeStyle = "rgba(34, 197, 94, 0.6)";
+  ctx.beginPath();
+  percentiles.p95.forEach((val, i) => {
+    const [x, y] = toXY(i, val);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+  
+  // Phasen-Trennung
+  const switchIdx = savingsYears * MONTHS_PER_YEAR;
+  if (switchIdx > 0 && switchIdx < months.length) {
+    const [sx] = toXY(switchIdx, 0);
+    ctx.strokeStyle = "#6b7280";
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx, padY);
+    ctx.lineTo(sx, height - padY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#94a3b8";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Entnahme →", sx - 6, padY + 20);
+  }
+  
+  mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
+}
+
+// Monte-Carlo Button Event Handler
+document.getElementById("btn-monte-carlo")?.addEventListener("click", async () => {
+  try {
+    messageEl.textContent = "";
+    const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+    const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+    const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+    const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+    
+    const params = {
+      start_savings: readNumber("start_savings", { min: 0 }),
+      start_etf: readNumber("start_etf", { min: 0 }),
+      monthly_savings: readNumber("monthly_savings", { min: 0 }),
+      monthly_etf: readNumber("monthly_etf", { min: 0 }),
+      savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+      etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+      etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
+      savings_target: readNumber("savings_target", { min: 0 }),
+      annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+      savings_years: readNumber("years_save", { min: 1, max: 100 }),
+      withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+      monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+      monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+      withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+      withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+      inflation_adjust_withdrawal: inflationAdjust,
+      special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+      special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+      inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+      special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+      special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+      inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
+      inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+      sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+      kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+      rent_mode: mode,
+    };
+    
+    const iterations = readNumber("mc_iterations", { min: 100, max: 10000 });
+    const volatility = readNumber("mc_volatility", { min: 1, max: 50 });
+    const showIndividual = document.getElementById("mc_show_individual")?.checked || false;
+    
+    // Button deaktivieren während Simulation läuft
+    const btn = document.getElementById("btn-monte-carlo");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Simuliere...";
+    }
+    
+    await runMonteCarloSimulation(params, iterations, volatility, showIndividual);
+    
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Monte-Carlo starten";
+    }
+    
+    messageEl.textContent = `Monte-Carlo-Simulation abgeschlossen (${iterations} Durchläufe).`;
+  } catch (err) {
+    const btn = document.getElementById("btn-monte-carlo");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Monte-Carlo starten";
+    }
+    messageEl.textContent = err.message || String(err);
+  }
+});
+
+// Resize Handler für MC Graph
+window.addEventListener("resize", () => {
+  if (lastMcResults) renderMonteCarloGraph(lastMcResults);
+});
+
+// Monte-Carlo Graph Hover Handler
+function handleMcHover(evt) {
+  if (!mcGraphState || !mcGraphState.results) {
+    tooltip.setAttribute("data-visible", "false");
+    tooltip.setAttribute("aria-hidden", "true");
+    return;
+  }
+  
+  const rect = mcGraphCanvas.getBoundingClientRect();
+  const x = evt.clientX - rect.left;
+  const { padX, width, results } = mcGraphState;
+  
+  if (x < padX || x > width - padX) {
+    tooltip.setAttribute("data-visible", "false");
+    tooltip.setAttribute("aria-hidden", "true");
+    return;
+  }
+  
+  const { percentiles, months, savingsYears } = results;
+  const xDenom = Math.max(months.length - 1, 1);
+  const idxFloat = (x - padX) / (width - 2 * padX) * xDenom;
+  const idx = Math.max(0, Math.min(months.length - 1, Math.round(idxFloat)));
+  
+  const month = months[idx];
+  const year = Math.ceil(month / MONTHS_PER_YEAR);
+  const monthInYear = ((month - 1) % MONTHS_PER_YEAR) + 1;
+  const phase = month <= savingsYears * MONTHS_PER_YEAR ? "Anspar" : "Entnahme";
+  
+  const lines = [
+    `Jahr ${year}, Monat ${monthInYear} (${phase})`,
+    `──────────────────`,
+    `95% (Best):  ${formatCurrency(percentiles.p95[idx])}`,
+    `75%:         ${formatCurrency(percentiles.p75[idx])}`,
+    `50% Median:  ${formatCurrency(percentiles.p50[idx])}`,
+    `25%:         ${formatCurrency(percentiles.p25[idx])}`,
+    `5% (Worst):  ${formatCurrency(percentiles.p5[idx])}`,
+  ];
+  
+  tooltip.textContent = lines.join("\n");
+  tooltip.style.left = `${evt.clientX + 14}px`;
+  tooltip.style.top = `${evt.clientY + 12}px`;
+  tooltip.setAttribute("data-visible", "true");
+  tooltip.setAttribute("aria-hidden", "false");
+}
+
+mcGraphCanvas?.addEventListener("mousemove", handleMcHover);
+mcGraphCanvas?.addEventListener("mouseleave", hideTooltip);

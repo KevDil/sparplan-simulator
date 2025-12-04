@@ -15,8 +15,84 @@
         <h1>Sparplan- & Entnahme-Simulator</h1>
       </div>
     </div>
+    <button class="btn-info" id="btn-info" title="Wie funktioniert die Simulation?">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 16v-4M12 8h.01"/>
+      </svg>
+      Wie funktioniert's?
+    </button>
     <p class="tagline">Steuer-optimiert mit Depot-Trick, Sonderausgaben & dynamischen Sparraten.</p>
   </header>
+
+  <!-- Info Modal -->
+  <div class="modal-overlay" id="info-modal" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Wie funktioniert die Simulation?</h2>
+        <button class="modal-close" id="modal-close" aria-label="Schließen">&times;</button>
+      </div>
+      <div class="modal-body">
+        <section class="info-section">
+          <h3>📊 Standard-Simulation</h3>
+          <p>Die Standard-Simulation berechnet den Vermögensverlauf mit <strong>festen Renditen</strong>:</p>
+          <ul>
+            <li><strong>Ansparphase:</strong> Monatliche Einzahlungen auf Tagesgeld und ETF mit dynamischer Erhöhung (Gehaltserhöhung p.a.)</li>
+            <li><strong>Tagesgeld-Ziel:</strong> Überschüsse werden automatisch in ETF umgeschichtet</li>
+            <li><strong>Entnahmephase:</strong> Monatliche Entnahmen nach der 4%-Regel oder festem Betrag</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🎲 Monte-Carlo-Simulation</h3>
+          <p>Die Monte-Carlo-Simulation führt <strong>hunderte/tausende Durchläufe</strong> mit zufälligen ETF-Renditen durch:</p>
+          <ul>
+            <li><strong>Renditemodell:</strong> Geometrische Brownsche Bewegung (GBM) mit Normalverteilung</li>
+            <li><strong>Parameter:</strong> Erwartete Rendite (eingegebene ETF-Rendite) und Volatilität (Standardabweichung)</li>
+            <li><strong>Monatliche Rendite:</strong> <code>r = μ/12 + σ/√12 × Z</code> (Z = Zufallszahl aus Standardnormalverteilung)</li>
+          </ul>
+          <p>Die Ergebnisse zeigen die <strong>Verteilung möglicher Ausgänge</strong> – von Best Case bis Worst Case.</p>
+        </section>
+
+        <section class="info-section">
+          <h3>💰 Steuerberechnung (Deutschland)</h3>
+          <ul>
+            <li><strong>Kapitalertragsteuer:</strong> 25% auf Gewinne</li>
+            <li><strong>Solidaritätszuschlag:</strong> 5,5% auf KESt</li>
+            <li><strong>Kirchensteuer:</strong> 8% oder 9% (optional, reduziert KESt leicht)</li>
+            <li><strong>Teilfreistellung:</strong> 30% der ETF-Gewinne sind steuerfrei (Aktienfonds)</li>
+            <li><strong>Sparerpauschbetrag:</strong> 1.000€ (Single) / 2.000€ (Verheiratet) steuerfrei pro Jahr</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🔄 Depot-Trick (LIFO)</h3>
+          <p>Beim Verkauf werden die <strong>zuletzt gekauften Anteile zuerst verkauft</strong> (Last-In-First-Out). 
+          Diese haben meist geringere Gewinne → weniger Steuern. Umsetzbar durch separate Depots oder Teilübertrag.</p>
+        </section>
+
+        <section class="info-section">
+          <h3>📈 Wichtige Kennzahlen</h3>
+          <ul>
+            <li><strong>Erfolgswahrscheinlichkeit:</strong> % der Simulationen, bei denen das Vermögen nicht aufgebraucht wird</li>
+            <li><strong>Kapitalerhalt:</strong> % der Fälle, wo Endvermögen ≥ Vermögen bei Rentenbeginn</li>
+            <li><strong>Pleite-Risiko:</strong> % der Fälle, wo Vermögen unter 10.000€ fällt</li>
+            <li><strong>Perzentile:</strong> 5%/25%/50%/75%/95% zeigen die Verteilung der Ergebnisse</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>⚠️ Hinweise</h3>
+          <ul>
+            <li>Die Simulation ist eine <strong>Schätzung</strong>, keine Garantie</li>
+            <li>Historische Renditen sind keine Garantie für zukünftige Ergebnisse</li>
+            <li>Volatilität von 15-20% ist typisch für globale Aktien-ETFs</li>
+            <li>Die 4%-Regel basiert auf historischen US-Daten (Trinity-Studie)</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <main class="page">
     <section class="panel panel--inputs">
@@ -160,108 +236,269 @@
           </div>
         </div>
 
+        <div class="group">
+          <div class="group__header">
+            <h2>Monte-Carlo-Simulation</h2>
+            <p>Stochastische Analyse mit variabler ETF-Rendite.</p>
+          </div>
+          <div class="grid">
+            <label class="field">
+              <span>Anzahl Simulationen</span>
+              <input type="number" step="100" id="mc_iterations" value="1000" min="100" max="10000">
+              <small class="field-hint">100-10.000 Durchläufe</small>
+            </label>
+            <label class="field">
+              <span>ETF Volatilität p.a. (%)</span>
+              <input type="number" step="0.5" id="mc_volatility" value="15.0" min="1" max="50">
+              <small class="field-hint">Historisch ~15-20% für Aktien-ETFs</small>
+            </label>
+            <label class="field field--checkbox">
+              <input type="checkbox" id="mc_show_individual" unchecked>
+              <span>Einzelne Pfade anzeigen (max. 50)</span>
+            </label>
+          </div>
+        </div>
+
         <div class="actions">
           <button type="submit" class="btn btn--primary">Simulation starten</button>
+          <button type="button" id="btn-monte-carlo" class="btn btn--accent">Monte-Carlo starten</button>
           <div class="btn-group">
             <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
             <button type="button" id="btn-export" class="btn btn--secondary">CSV Export</button>
           </div>
-          <p class="hint">Hinweis: Simulation nutzt automatisch den \u201eDepot-Trick\u201c (j\u00fcngste Anteile zuerst) f\u00fcr geringere Steuerlast. Tagesgeldzinsen werden ebenfalls besteuert.</p>
+          <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick" (jüngste Anteile zuerst) für geringere Steuerlast. Tagesgeldzinsen werden ebenfalls besteuert.</p>
         </div>
         <div id="message" class="message" role="alert" aria-live="polite"></div>
       </form>
     </section>
 
     <section class="panel panel--results">
-      <div class="result-header">
-        <div>
-          <p class="eyebrow">Visualisierung</p>
-          <h2>Vermögensverlauf</h2>
-        </div>
-        <div class="legend">
-          <span class="legend__item"><span class="dot dot--total"></span>Gesamtvermögen</span>
-          <span class="legend__item"><span class="dot dot--real"></span>Gesamt (inflationsbereinigt)</span>
-        </div>
-      </div>
-      <div class="graph-wrapper">
-        <canvas id="graph" aria-label="Vermögensgraph"></canvas>
-      </div>
-
-      <div class="result-header">
-        <div>
-          <p class="eyebrow">Jahresübersicht</p>
-          <h2>Aggregierte Werte</h2>
-        </div>
-      </div>
-      <div class="table-wrapper">
-        <table id="year-table">
-          <thead>
-            <tr>
-              <th>Jahr</th>
-              <th>Phase</th>
-              <th>TG-Saldo</th>
-              <th>ETF-Saldo</th>
-              <th>Gesamt</th>
-              <th>Gesamt (real)</th>
-              <th>Rendite</th>
-              <th>Entnahme</th>
-              <th>Steuern</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button class="tab tab--active" data-tab="standard">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-3 3"/>
+          </svg>
+          Standard
+        </button>
+        <button class="tab" data-tab="monte-carlo">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+          </svg>
+          Monte-Carlo
+          <span class="tab-badge" id="mc-badge" style="display: none;">✓</span>
+        </button>
+        <button class="tab" data-tab="tabelle">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>
+          </svg>
+          Jahresübersicht
+        </button>
       </div>
 
-      <div class="result-header">
-        <div>
-          <p class="eyebrow">Zusammenfassung</p>
-          <h2>Simulationsergebnisse</h2>
+      <!-- Tab: Standard-Simulation -->
+      <div class="tab-content tab-content--active" id="tab-standard">
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">Visualisierung</p>
+            <h2>Vermögensverlauf</h2>
+          </div>
+          <div class="legend">
+            <span class="legend__item"><span class="dot dot--total"></span>Gesamtvermögen</span>
+            <span class="legend__item"><span class="dot dot--real"></span>Gesamt (inflationsbereinigt)</span>
+          </div>
+        </div>
+        <div class="graph-wrapper">
+          <canvas id="graph" aria-label="Vermögensgraph"></canvas>
+        </div>
+
+        <div class="result-header result-header--stats">
+          <div>
+            <p class="eyebrow">Zusammenfassung</p>
+            <h2>Simulationsergebnisse</h2>
+          </div>
+        </div>
+        <div id="stats-panel" class="stats-panel">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-label">Endvermögen (nominal)</span>
+              <span class="stat-value" id="stat-end-nominal">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Endvermögen (real)</span>
+              <span class="stat-value" id="stat-end-real">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Eingezahlt gesamt</span>
+              <span class="stat-value" id="stat-total-invested">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Rendite gesamt</span>
+              <span class="stat-value" id="stat-total-return">-</span>
+            </div>
+            <div class="stat-card stat-card--clickable" id="stat-card-avg-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+              <span class="stat-label">Ø Entnahme/Monat (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-1">ohne Sonder</span></span>
+              <span class="stat-value" id="stat-avg-withdrawal">-</span>
+            </div>
+            <div class="stat-card stat-card--clickable" id="stat-card-avg-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+              <span class="stat-label">Ø Entnahme/Monat (real) <span class="stat-toggle-hint" id="stat-toggle-hint-2">ohne Sonder</span></span>
+              <span class="stat-value stat-value--highlight" id="stat-avg-withdrawal-real">-</span>
+            </div>
+            <div class="stat-card stat-card--clickable" id="stat-card-minmax-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+              <span class="stat-label">Min/Max Entnahme (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-3">ohne Sonder</span></span>
+              <span class="stat-value" id="stat-minmax-withdrawal">-</span>
+            </div>
+            <div class="stat-card stat-card--clickable" id="stat-card-minmax-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+              <span class="stat-label">Min/Max Entnahme (real) <span class="stat-toggle-hint" id="stat-toggle-hint-4">ohne Sonder</span></span>
+              <span class="stat-value stat-value--highlight" id="stat-minmax-withdrawal-real">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Steuern gesamt</span>
+              <span class="stat-value" id="stat-total-tax">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Effektive Entnahmerate</span>
+              <span class="stat-value" id="stat-effective-rate">-</span>
+            </div>
+          </div>
+          <div id="stat-warning" class="stat-warning"></div>
         </div>
       </div>
-      <div id="stats-panel" class="stats-panel">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <span class="stat-label">Endvermögen (nominal)</span>
-            <span class="stat-value" id="stat-end-nominal">-</span>
+
+      <!-- Tab: Monte-Carlo -->
+      <div class="tab-content" id="tab-monte-carlo">
+        <div class="mc-empty-state" id="mc-empty-state">
+          <div class="mc-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Endvermögen (real)</span>
-            <span class="stat-value" id="stat-end-real">-</span>
+          <h3>Monte-Carlo-Simulation starten</h3>
+          <p>Klicke auf "Monte-Carlo starten" um eine stochastische Analyse mit variabler ETF-Rendite durchzuführen.</p>
+          <p class="mc-empty-hint">Die Simulation führt hunderte Durchläufe mit zufälligen Renditen durch und zeigt die Erfolgswahrscheinlichkeit deiner Entnahme-Strategie.</p>
+        </div>
+
+        <div id="mc-results" class="mc-results" style="display: none;">
+          <div class="mc-progress-bar" id="mc-progress-bar">
+            <progress id="mc-progress" value="0" max="100"></progress>
+            <span id="mc-progress-text"></span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Eingezahlt gesamt</span>
-            <span class="stat-value" id="stat-total-invested">-</span>
+
+          <!-- Highlight: Erfolgswahrscheinlichkeit -->
+          <div class="mc-highlight">
+            <div class="mc-highlight-main">
+              <span class="mc-highlight-label">Erfolgswahrscheinlichkeit</span>
+              <span class="mc-highlight-value" id="mc-success-rate">-</span>
+              <span class="mc-highlight-hint">Vermögen reicht für den gesamten Entnahmezeitraum</span>
+            </div>
+            <div class="mc-highlight-meta">
+              <span id="mc-iterations-done">-</span> Simulationen durchgeführt
+            </div>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Rendite gesamt</span>
-            <span class="stat-value" id="stat-total-return">-</span>
+          
+          <div class="stats-grid stats-grid--mc">
+            <div class="stat-card stat-card--mc">
+              <span class="stat-label">Endvermögen (Median)</span>
+              <span class="stat-value" id="mc-median-end">-</span>
+              <small class="stat-hint">50% Perzentil</small>
+            </div>
+            <div class="stat-card stat-card--mc">
+              <span class="stat-label">Endvermögen (10%-90%)</span>
+              <span class="stat-value" id="mc-range-end">-</span>
+              <small class="stat-hint">80% Konfidenzintervall</small>
+            </div>
+            <div class="stat-card stat-card--mc stat-card--worst">
+              <span class="stat-label">Worst Case (5%)</span>
+              <span class="stat-value" id="mc-worst-case">-</span>
+              <small class="stat-hint">Nur 5% sind schlechter</small>
+            </div>
+            <div class="stat-card stat-card--mc stat-card--best">
+              <span class="stat-label">Best Case (95%)</span>
+              <span class="stat-value" id="mc-best-case">-</span>
+              <small class="stat-hint">Nur 5% sind besser</small>
+            </div>
           </div>
-          <div class="stat-card stat-card--clickable" id="stat-card-avg-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-            <span class="stat-label">Ø Entnahme/Monat (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-1">ohne Sonder</span></span>
-            <span class="stat-value" id="stat-avg-withdrawal">-</span>
+
+          <div class="mc-chart-section">
+            <div class="result-header">
+              <div>
+                <p class="eyebrow">Fan-Chart</p>
+                <h2>Vermögensverteilung über Zeit</h2>
+              </div>
+              <div class="legend legend--wrap">
+                <span class="legend__item"><span class="dot dot--mc-median"></span>Median (50%)</span>
+                <span class="legend__item"><span class="dot dot--mc-50"></span>25%-75%</span>
+                <span class="legend__item"><span class="dot dot--mc-80"></span>10%-90%</span>
+                <span class="legend__item"><span class="dot dot--mc-p5"></span>5% (Worst)</span>
+                <span class="legend__item"><span class="dot dot--mc-p95"></span>95% (Best)</span>
+              </div>
+            </div>
+            <div class="graph-wrapper">
+              <canvas id="mc-graph" aria-label="Monte-Carlo Vermögensgraph"></canvas>
+            </div>
           </div>
-          <div class="stat-card stat-card--clickable" id="stat-card-avg-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-            <span class="stat-label">Ø Entnahme/Monat (real) <span class="stat-toggle-hint" id="stat-toggle-hint-2">ohne Sonder</span></span>
-            <span class="stat-value stat-value--highlight" id="stat-avg-withdrawal-real">-</span>
-          </div>
-          <div class="stat-card stat-card--clickable" id="stat-card-minmax-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-            <span class="stat-label">Min/Max Entnahme (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-3">ohne Sonder</span></span>
-            <span class="stat-value" id="stat-minmax-withdrawal">-</span>
-          </div>
-          <div class="stat-card stat-card--clickable" id="stat-card-minmax-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-            <span class="stat-label">Min/Max Entnahme (real) <span class="stat-toggle-hint" id="stat-toggle-hint-4">ohne Sonder</span></span>
-            <span class="stat-value stat-value--highlight" id="stat-minmax-withdrawal-real">-</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Steuern gesamt</span>
-            <span class="stat-value" id="stat-total-tax">-</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Effektive Entnahmerate</span>
-            <span class="stat-value" id="stat-effective-rate">-</span>
+
+          <!-- Zusätzliche Metriken -->
+          <div class="mc-additional-stats">
+            <div class="result-header">
+              <div>
+                <p class="eyebrow">Weitere Kennzahlen</p>
+                <h2>Verteilungsanalyse</h2>
+              </div>
+            </div>
+            <div class="stats-grid stats-grid--mc">
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                <span class="stat-value" id="mc-retirement-wealth">-</span>
+                <small class="stat-hint">Median am Start der Entnahme</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Kapitalerhalt-Wahrscheinlichkeit</span>
+                <span class="stat-value" id="mc-capital-preservation">-</span>
+                <small class="stat-hint">Endvermögen ≥ Startvermögen Entnahme</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Pleite-Risiko</span>
+                <span class="stat-value" id="mc-ruin-probability">-</span>
+                <small class="stat-hint">Vermögen fällt unter 10.000 €</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Durchschnittl. Endvermögen</span>
+                <span class="stat-value" id="mc-mean-end">-</span>
+                <small class="stat-hint">Arithmetisches Mittel</small>
+              </div>
+            </div>
           </div>
         </div>
-        <div id="stat-warning" class="stat-warning"></div>
+      </div>
+
+      <!-- Tab: Jahresübersicht -->
+      <div class="tab-content" id="tab-tabelle">
+        <div class="result-header">
+          <div>
+            <p class="eyebrow">Jahresübersicht</p>
+            <h2>Aggregierte Werte pro Jahr</h2>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table id="year-table">
+            <thead>
+              <tr>
+                <th>Jahr</th>
+                <th>Phase</th>
+                <th>TG-Saldo</th>
+                <th>ETF-Saldo</th>
+                <th>Gesamt</th>
+                <th>Gesamt (real)</th>
+                <th>Rendite</th>
+                <th>Entnahme</th>
+                <th>Steuern</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </main>
