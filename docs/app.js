@@ -522,10 +522,11 @@ async function exportToPdf(history, params = lastParams) {
     ];
     
     if (entnahmeRows.length > 0) {
+      // KORRIGIERT: Nutze tatsächlich gezahlte Beträge (monthly_payout), nicht gewünschte
       const withdrawals = entnahmeRows.filter(r => r.monthly_payout > 0).map(r => r.monthly_payout);
       if (withdrawals.length > 0) {
         const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
-        stats.push(["Ø Entnahme/Monat", formatCurrency(avgWithdrawal)]);
+        stats.push(["Ø Entnahme/Monat (tatsächlich)", formatCurrency(avgWithdrawal)]);
       }
     }
     
@@ -1252,16 +1253,17 @@ function simulate(params, volatility = 0) {
         }
       }
 
-      monthlyPayout = currentPayout; // Nur reguläre monatliche Entnahme (für Statistik)
+      const requestedMonthlyPayout = currentPayout; // Gewünschte reguläre monatliche Entnahme
+      let specialExpenseThisMonth = 0;
       let needed_net = currentPayout;
       if (special_interval_years_withdrawal > 0
         && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
         // Inflationsanpassung der Sonderausgabe
-        let specialAmount = special_payout_net_withdrawal;
+        specialExpenseThisMonth = special_payout_net_withdrawal;
         if (inflation_adjust_special_withdrawal) {
-          specialAmount = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+          specialExpenseThisMonth = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
         }
-        needed_net += specialAmount;
+        needed_net += specialExpenseThisMonth;
       }
 
       if (needed_net > 0) {
@@ -1295,6 +1297,16 @@ function simulate(params, volatility = 0) {
 
         withdrawal_paid = withdrawal - Math.max(0, remaining);
       }
+      
+      // KORRIGIERT: Berechne tatsächlich gezahlte monatliche Entnahme (ohne Sonderausgaben)
+      // Bei Shortfalls wird proportional gekürzt
+      if (withdrawal > 0 && withdrawal_paid < withdrawal) {
+        // Proportionale Kürzung: beide (regular + special) werden anteilig reduziert
+        const payoutRatio = withdrawal_paid / withdrawal;
+        monthlyPayout = requestedMonthlyPayout * payoutRatio;
+      } else {
+        monthlyPayout = requestedMonthlyPayout;
+      }
     }
 
     // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
@@ -1323,9 +1335,10 @@ function simulate(params, volatility = 0) {
           zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
         }
         
-        // Basisertrag = Grundlage × Basiszins × Zeitanteil
-        // HINWEIS: Teilfreistellung (0,7) wird erst bei der Besteuerung angewendet, nicht hier!
-        const lotBasisertrag = basisertragBase * (basiszins / 100) * zeitanteil;
+        // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
+        // KORRIGIERT: Nach § 18 InvStG muss die Teilfreistellung (0,7 für Aktienfonds) 
+        // bereits bei der Basisertrag-Berechnung angewendet werden, nicht erst bei der Besteuerung!
+        const lotBasisertrag = basisertragBase * (basiszins / 100) * TEILFREISTELLUNG * zeitanteil;
         
         // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
         const lotValueYearEnd = lot.amount * currentEtfPrice;
@@ -1727,8 +1740,9 @@ function renderStats(history, params) {
       const capitalRatio = startCapital > 0 ? endCapital / startCapital : 1;
       
       // Prüfe ob Entnahmen nicht vollständig bedient werden konnten
+      // KORRIGIERT: Nutze withdrawal_requested (gesamt angefordert) vs withdrawal (tatsächlich gezahlt)
       const shortfallMonths = entnahmeRows.filter(r => {
-        const requested = r.monthly_payout || 0;
+        const requested = r.withdrawal_requested || 0;
         const paid = r.withdrawal || 0;
         return requested > 0 && paid < requested * 0.99; // 1% Toleranz
       }).length;
@@ -1782,8 +1796,12 @@ function renderGraph(history) {
   const xDenom = Math.max(history.length - 1, 1);
   
   // Min/Max für beide Skalierungen
-  const minVal = Math.max(1000, Math.min(...totals.filter(v => v > 0), ...totalsReal.filter(v => v > 0)));
-  const maxVal = Math.max(minVal * 10, ...totals, ...totalsReal);
+  // KORRIGIERT: Fallback wenn alle Werte <= 0 sind (z.B. alle Eingaben 0)
+  const positiveVals = [...totals.filter(v => v > 0), ...totalsReal.filter(v => v > 0)];
+  const minVal = positiveVals.length > 0 
+    ? Math.max(1000, Math.min(...positiveVals)) 
+    : 1000; // Fallback auf 1000 wenn keine positiven Werte
+  const maxVal = Math.max(minVal * 10, ...totals, ...totalsReal, 10000); // Mindestens 10000 als Max
   
   let toXY;
   
@@ -1791,12 +1809,14 @@ function renderGraph(history) {
     // Logarithmische Skala
     const logMin = Math.log10(minVal);
     const logMax = Math.log10(maxVal);
+    const logRange = logMax - logMin;
     
     toXY = (idx, val) => {
       const x = padX + (idx / xDenom) * (width - 2 * padX);
       const clampedVal = Math.max(minVal, val);
       const logVal = Math.log10(clampedVal);
-      const yNorm = (logVal - logMin) / (logMax - logMin);
+      // KORRIGIERT: Verhindere Division durch 0 wenn logMax === logMin
+      const yNorm = logRange > 0 ? (logVal - logMin) / logRange : 0.5;
       const y = height - padY - yNorm * (height - 2 * padY);
       return [x, y];
     };
@@ -1804,7 +1824,8 @@ function renderGraph(history) {
     // Lineare Skala
     toXY = (idx, val) => {
       const x = padX + (idx / xDenom) * (width - 2 * padX);
-      const y = height - padY - (val / maxVal) * (height - 2 * padY);
+      // KORRIGIERT: Verhindere Division durch 0
+      const y = height - padY - (maxVal > 0 ? (val / maxVal) : 0) * (height - 2 * padY);
       return [x, y];
     };
   }
