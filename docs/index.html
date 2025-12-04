@@ -397,26 +397,57 @@
             </div>
           </div>
           
-          <div class="stats-grid stats-grid--mc">
-            <div class="stat-card stat-card--mc">
-              <span class="stat-label">Endvermögen (Median)</span>
-              <span class="stat-value" id="mc-median-end">-</span>
-              <small class="stat-hint">50% Perzentil</small>
+          <!-- Nominale Werte -->
+          <div class="mc-stats-section">
+            <h4 class="mc-stats-title">Nominale Werte</h4>
+            <div class="stats-grid stats-grid--mc">
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Endvermögen (Median)</span>
+                <span class="stat-value" id="mc-median-end">-</span>
+                <small class="stat-hint">50% Perzentil</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Endvermögen (10%-90%)</span>
+                <span class="stat-value" id="mc-range-end">-</span>
+                <small class="stat-hint">80% Konfidenzintervall</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--worst">
+                <span class="stat-label">Worst Case (5%)</span>
+                <span class="stat-value" id="mc-worst-case">-</span>
+                <small class="stat-hint">Nur 5% sind schlechter</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--best">
+                <span class="stat-label">Best Case (95%)</span>
+                <span class="stat-value" id="mc-best-case">-</span>
+                <small class="stat-hint">Nur 5% sind besser</small>
+              </div>
             </div>
-            <div class="stat-card stat-card--mc">
-              <span class="stat-label">Endvermögen (10%-90%)</span>
-              <span class="stat-value" id="mc-range-end">-</span>
-              <small class="stat-hint">80% Konfidenzintervall</small>
-            </div>
-            <div class="stat-card stat-card--mc stat-card--worst">
-              <span class="stat-label">Worst Case (5%)</span>
-              <span class="stat-value" id="mc-worst-case">-</span>
-              <small class="stat-hint">Nur 5% sind schlechter</small>
-            </div>
-            <div class="stat-card stat-card--mc stat-card--best">
-              <span class="stat-label">Best Case (95%)</span>
-              <span class="stat-value" id="mc-best-case">-</span>
-              <small class="stat-hint">Nur 5% sind besser</small>
+          </div>
+
+          <!-- Inflationsbereinigte Werte -->
+          <div class="mc-stats-section">
+            <h4 class="mc-stats-title">Inflationsbereinigt (real)</h4>
+            <div class="stats-grid stats-grid--mc">
+              <div class="stat-card stat-card--mc stat-card--real">
+                <span class="stat-label">Endvermögen (Median)</span>
+                <span class="stat-value stat-value--highlight" id="mc-median-end-real">-</span>
+                <small class="stat-hint">50% Perzentil in heutiger Kaufkraft</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--real">
+                <span class="stat-label">Endvermögen (10%-90%)</span>
+                <span class="stat-value stat-value--highlight" id="mc-range-end-real">-</span>
+                <small class="stat-hint">80% Konfidenzintervall</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--worst">
+                <span class="stat-label">Worst Case (5%)</span>
+                <span class="stat-value" id="mc-worst-case-real">-</span>
+                <small class="stat-hint">In heutiger Kaufkraft</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--best">
+                <span class="stat-label">Best Case (95%)</span>
+                <span class="stat-value" id="mc-best-case-real">-</span>
+                <small class="stat-hint">In heutiger Kaufkraft</small>
+              </div>
             </div>
           </div>
 

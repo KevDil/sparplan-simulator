@@ -1505,6 +1505,17 @@ function analyzeMonteCarloResults(allHistories, params) {
     capitalPreservationRate,
     ruinProbability,
     meanEnd,
+    // Inflationsbereinigte Werte (real)
+    medianEndReal: percentile(finalTotalsReal, 50),
+    p10EndReal: percentile(finalTotalsReal, 10),
+    p90EndReal: percentile(finalTotalsReal, 90),
+    p5EndReal: percentile(finalTotalsReal, 5),
+    p95EndReal: percentile(finalTotalsReal, 95),
+    meanEndReal: finalTotalsReal.reduce((a, b) => a + b, 0) / numSims,
+    retirementMedianReal: percentile(
+      allHistories.map(h => h[retirementIdx]?.total_real || 0).sort((a, b) => a - b), 
+      50
+    ),
   };
 }
 
@@ -1512,6 +1523,7 @@ function renderMonteCarloStats(results) {
   const successEl = document.getElementById("mc-success-rate");
   successEl.textContent = `${results.successRate.toFixed(1)}%`;
   
+  // Nominale Werte
   document.getElementById("mc-median-end").textContent = formatCurrency(results.medianEnd);
   document.getElementById("mc-range-end").textContent = 
     `${formatCurrency(results.p10End)} - ${formatCurrency(results.p90End)}`;
@@ -1519,10 +1531,19 @@ function renderMonteCarloStats(results) {
   document.getElementById("mc-best-case").textContent = formatCurrency(results.p95End);
   document.getElementById("mc-iterations-done").textContent = nf0.format(results.iterations);
   
+  // Inflationsbereinigte Werte (real)
+  document.getElementById("mc-median-end-real").textContent = formatCurrency(results.medianEndReal);
+  document.getElementById("mc-range-end-real").textContent = 
+    `${formatCurrency(results.p10EndReal)} - ${formatCurrency(results.p90EndReal)}`;
+  document.getElementById("mc-worst-case-real").textContent = formatCurrency(results.p5EndReal);
+  document.getElementById("mc-best-case-real").textContent = formatCurrency(results.p95EndReal);
+  
   // Zusätzliche Metriken
-  document.getElementById("mc-retirement-wealth").textContent = formatCurrency(results.retirementMedian);
+  document.getElementById("mc-retirement-wealth").textContent = 
+    `${formatCurrency(results.retirementMedian)} / ${formatCurrency(results.retirementMedianReal)}`;
   document.getElementById("mc-capital-preservation").textContent = `${results.capitalPreservationRate.toFixed(1)}%`;
-  document.getElementById("mc-mean-end").textContent = formatCurrency(results.meanEnd);
+  document.getElementById("mc-mean-end").textContent = 
+    `${formatCurrency(results.meanEnd)} / ${formatCurrency(results.meanEndReal)}`;
   
   // Pleite-Risiko mit Farbcodierung
   const ruinEl = document.getElementById("mc-ruin-probability");
