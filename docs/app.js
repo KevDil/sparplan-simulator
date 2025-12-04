@@ -491,10 +491,12 @@ function simulate(params) {
       etf_contrib,
       savings_interest: savingsInterest,
       withdrawal: withdrawal_paid,
+      withdrawal_real: withdrawal_paid / cumulativeInflation, // Reale Kaufkraft der Entnahme
       tax_paid,
       payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
+      cumulative_inflation: cumulativeInflation, // Für Debugging/Anzeige
     });
   }
 
@@ -572,8 +574,10 @@ function renderStats(history, params) {
   const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
   document.getElementById("stat-total-return").textContent = formatCurrency(totalReturn);
 
-  // Entnahme-Statistiken
+  // Entnahme-Statistiken (nominal)
   const withdrawals = entnahmeRows.filter(r => r.withdrawal > 0).map(r => r.withdrawal);
+  const withdrawalsReal = entnahmeRows.filter(r => r.withdrawal_real > 0).map(r => r.withdrawal_real);
+  
   if (withdrawals.length > 0) {
     const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
     const minWithdrawal = Math.min(...withdrawals);
@@ -581,9 +585,19 @@ function renderStats(history, params) {
     document.getElementById("stat-avg-withdrawal").textContent = formatCurrency(avgWithdrawal);
     document.getElementById("stat-minmax-withdrawal").textContent = 
       `${formatCurrency(minWithdrawal)} / ${formatCurrency(maxWithdrawal)}`;
+    
+    // Reale Kaufkraft der Entnahmen
+    const avgWithdrawalReal = withdrawalsReal.reduce((a, b) => a + b, 0) / withdrawalsReal.length;
+    const minWithdrawalReal = Math.min(...withdrawalsReal);
+    const maxWithdrawalReal = Math.max(...withdrawalsReal);
+    document.getElementById("stat-avg-withdrawal-real").textContent = formatCurrency(avgWithdrawalReal);
+    document.getElementById("stat-minmax-withdrawal-real").textContent = 
+      `${formatCurrency(minWithdrawalReal)} / ${formatCurrency(maxWithdrawalReal)}`;
   } else {
     document.getElementById("stat-avg-withdrawal").textContent = "-";
     document.getElementById("stat-minmax-withdrawal").textContent = "-";
+    document.getElementById("stat-avg-withdrawal-real").textContent = "-";
+    document.getElementById("stat-minmax-withdrawal-real").textContent = "-";
   }
 
   // Steuern gesamt

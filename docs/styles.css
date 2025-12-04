@@ -429,6 +429,10 @@ input:disabled {
   color: var(--text);
 }
 
+.stat-value--highlight {
+  color: var(--accent);
+}
+
 /* Druckansicht */
 @media print {
   body {
