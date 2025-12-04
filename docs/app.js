@@ -954,9 +954,9 @@ function simulate(params) {
   // Vorabpauschale-Tracking: ETF-Wert am Jahresanfang
   let etfValueYearStart = start_etf;
   let vorabpauschaleTaxYearly = 0;
-  // Netto-Zuflüsse ins ETF-Depot dieses Jahres (Käufe - Verkaufserlöse)
-  // Für korrekte Vorabpauschale: actualGain = Endwert - Startwert - NetInflows
-  let etfNetInflowsThisYear = 0;
+  // Nur Käufe (positive Zuflüsse) für Vorabpauschale-Berechnung
+  // WICHTIG: Verkäufe werden NICHT abgezogen, da Verkaufsgewinne bereits versteuert wurden
+  let etfNetPurchasesThisYear = 0;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
@@ -974,7 +974,7 @@ function simulate(params) {
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
       vorabpauschaleTaxYearly = 0;
-      etfNetInflowsThisYear = 0;
+      etfNetPurchasesThisYear = 0;
     }
 
     // Wertentwicklung vor Cashflows
@@ -1028,7 +1028,7 @@ function simulate(params) {
       if (etf_contrib > 0) {
         const newShares = etf_contrib / currentEtfPrice;
         etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
-        etfNetInflowsThisYear += etf_contrib; // Für Vorabpauschale-Berechnung
+        etfNetPurchasesThisYear += etf_contrib; // Nur Käufe für Vorabpauschale
       }
 
       // Sonderausgaben Ansparphase
@@ -1057,7 +1057,8 @@ function simulate(params) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
+        // Verkaufserlöse NICHT von etfNetPurchasesThisYear abziehen!
+        // Verkaufsgewinne wurden bereits versteuert, dürfen nicht nochmals in Vorabpauschale
 
         // TG unter Ziel
         if (remaining > 0.01) {
@@ -1160,7 +1161,7 @@ function simulate(params) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
+        // Verkaufserlöse NICHT abziehen - bereits versteuert!
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -1187,9 +1188,11 @@ function simulate(params) {
       // Basisertrag = ETF-Wert am Jahresanfang × Basiszins × 0,7
       const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
       
-      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Netto-Zuflüsse
-      // (ohne Einzahlungen zu besteuern, Verkäufe wurden bereits versteuert)
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetInflowsThisYear);
+      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Käufe
+      // WICHTIG: Nur Käufe abziehen, nicht Verkäufe! Verkaufsgewinne wurden bereits
+      // beim Verkauf versteuert und dürfen nicht nochmals in die Vorabpauschale einfließen.
+      // etfNetPurchasesThisYear enthält nur positive Zuflüsse (Käufe), keine Verkäufe.
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetPurchasesThisYear);
       
       // Vorabpauschale = min(Basisertrag, tatsächlicher Wertzuwachs)
       // Bei negativer Wertentwicklung: keine Vorabpauschale
@@ -1977,6 +1980,12 @@ function updateMcStatsView() {
     btnMcStatsNominal?.classList.add("stats-toggle-btn--active");
     btnMcStatsReal?.classList.remove("stats-toggle-btn--active");
   }
+  
+  // Graph auch auf Real/Nominal umschalten
+  mcUseRealValues = showMcRealStats;
+  if (lastMcResults) {
+    renderMonteCarloGraph(lastMcResults);
+  }
 }
 
 btnMcStatsNominal?.addEventListener("click", () => {
@@ -2076,6 +2085,7 @@ const mcBadgeEl = document.getElementById("mc-badge");
 let mcGraphState = null;
 let lastMcResults = null;
 let mcUseLogScale = true; // Standard: logarithmische Skala
+let mcUseRealValues = false; // Standard: nominale Werte im Graph
 
 // Box-Muller Transform für Normalverteilung
 function randomNormal(mean = 0, stdDev = 1) {
@@ -2162,8 +2172,8 @@ function simulateStochastic(params, annualVolatility) {
   
   // Vorabpauschale-Tracking
   let etfValueYearStart = start_etf;
-  // Netto-Zuflüsse ins ETF-Depot dieses Jahres (Käufe - Verkaufserlöse)
-  let etfNetInflowsThisYear = 0;
+  // Nur Käufe für Vorabpauschale (Verkäufe wurden bereits versteuert)
+  let etfNetPurchasesThisYear = 0;
   
   // Kapitalerhalt-Modus Tracking
   let capitalPreservationActive = false;
@@ -2181,14 +2191,16 @@ function simulateStochastic(params, annualVolatility) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
-      etfNetInflowsThisYear = 0;
+      etfNetPurchasesThisYear = 0;
     }
 
     // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
     // GBM: S_t = S_0 * exp((μ - σ²/2)*t + σ*W_t)
     // Für diskreten Zeitschritt dt=1 Monat: S_t+1 = S_t * exp((μ - σ²/2) + σ*Z)
     // wobei Z ~ N(0,1). Dies garantiert E[S_t] = S_0 * e^(μt) und verhindert negative Preise.
-    const drift = monthlyEtfMean - 0.5 * monthlyVolatility * monthlyVolatility;
+    // WICHTIG: μ muss die kontinuierliche Rate sein: ln(1 + r), nicht r selbst!
+    const continuousMonthlyRate = Math.log(1 + monthlyEtfMean);
+    const drift = continuousMonthlyRate - 0.5 * monthlyVolatility * monthlyVolatility;
     const z = randomNormal(0, 1);
     const monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z); // Multiplikativer Faktor
     currentEtfPrice *= monthlyEtfReturn;
@@ -2233,7 +2245,7 @@ function simulateStochastic(params, annualVolatility) {
       if (etf_contrib > 0) {
         const newShares = etf_contrib / currentEtfPrice;
         etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
-        etfNetInflowsThisYear += etf_contrib; // Für Vorabpauschale-Berechnung
+        etfNetPurchasesThisYear += etf_contrib; // Nur Käufe für Vorabpauschale
       }
 
       // Sonderausgaben Ansparphase
@@ -2260,7 +2272,7 @@ function simulateStochastic(params, annualVolatility) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
+        // Verkaufserlöse NICHT abziehen - bereits versteuert!
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -2347,7 +2359,7 @@ function simulateStochastic(params, annualVolatility) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
+        // Verkaufserlöse NICHT abziehen - bereits versteuert!
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -2371,8 +2383,8 @@ function simulateStochastic(params, annualVolatility) {
       const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
       
       const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
-      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Netto-Zuflüsse
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetInflowsThisYear);
+      // Nur Käufe abziehen, nicht Verkäufe (bereits versteuert)
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetPurchasesThisYear);
       const vorabpauschale = Math.min(basisertrag, actualGain);
       
       if (vorabpauschale > 0) {
@@ -2404,11 +2416,14 @@ function simulateStochastic(params, annualVolatility) {
       total,
       total_real: total / cumulativeInflation,
       withdrawal: withdrawal_paid,
+      withdrawal_real: withdrawal_paid / cumulativeInflation, // Für reale Statistiken
       withdrawal_requested: withdrawal, // Für Shortfall-Analyse
       shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt
       monthly_payout: monthlyPayout,
+      monthly_payout_real: monthlyPayout / cumulativeInflation, // Für reale Statistiken
       tax_paid,
       etfReturn: monthlyEtfReturn, // Für zeitgewichtete Rendite (TWR) in SoRR-Analyse
+      cumulative_inflation: cumulativeInflation, // Für inflationsbereinigte Schwellen
     });
   }
 
@@ -2640,15 +2655,23 @@ function analyzeMonteCarloResults(allHistories, params) {
   const retirementTotals = allHistories.map(h => h[retirementIdx]?.total || 0).sort((a, b) => a - b);
   const retirementMedian = percentile(retirementTotals, 50);
   
-  // Erfolgsrate: Vermögen > 100 € am Ende UND keine Shortfalls während Entnahmephase
+  // Erfolgsrate: Vermögen > 100 € (real) am Ende UND keine Shortfalls während Entnahmephase
   // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
+  // WICHTIG: Schwellen sind REAL (inflationsbereinigt), nicht nominal!
+  const SUCCESS_THRESHOLD_REAL = 100; // 100€ in heutiger Kaufkraft
+  const RUIN_THRESHOLD_REAL = 10000;  // 10.000€ in heutiger Kaufkraft
+  
   let successCountStrict = 0;
   let successCountNominal = 0;
   let totalShortfallCount = 0; // Simulationen mit mindestens einem Shortfall
   
   for (const history of allHistories) {
-    const endWealth = history[history.length - 1]?.total || 0;
-    const hasPositiveEnd = endWealth > 100;
+    const lastRow = history[history.length - 1];
+    const endWealth = lastRow?.total || 0;
+    const endInflation = lastRow?.cumulative_inflation || 1;
+    // Schwelle ist REAL: 100€ in heutiger Kaufkraft = 100 * Inflation in nominalen €
+    const successThresholdNominal = SUCCESS_THRESHOLD_REAL * endInflation;
+    const hasPositiveEnd = endWealth > successThresholdNominal;
     
     // Prüfe auf Shortfalls in der Entnahmephase
     let hasShortfall = false;
@@ -2664,14 +2687,14 @@ function analyzeMonteCarloResults(allHistories, params) {
     if (hasShortfall) totalShortfallCount++;
   }
   
-  // Strenge Erfolgsrate: Keine Shortfalls UND positives Endvermögen
+  // Strenge Erfolgsrate: Keine Shortfalls UND positives Endvermögen (real)
   const successRate = (successCountStrict / numSims) * 100;
-  // Nominale Erfolgsrate (nur Endvermögen > 100€, wie bisher)
+  // Nominale Erfolgsrate (Endvermögen > 100€ real, wie oben)
   const successRateNominal = (successCountNominal / numSims) * 100;
   // Shortfall-Quote: Anteil der Simulationen mit mindestens einem Shortfall
   const shortfallRate = (totalShortfallCount / numSims) * 100;
   
-  // Kapitalerhalt: Endvermögen >= Vermögen bei Rentenbeginn
+  // Kapitalerhalt: Endvermögen >= Vermögen bei Rentenbeginn (nominal, da gleicher Zeitpunkt irrelevant)
   let capitalPreservationCount = 0;
   for (let i = 0; i < numSims; i++) {
     const retirementWealth = allHistories[i][retirementIdx]?.total || 0;
@@ -2680,15 +2703,18 @@ function analyzeMonteCarloResults(allHistories, params) {
   }
   const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
   
-  // Pleite-Risiko: Vermögen fällt unter 10.000 € ODER Shortfall tritt auf
+  // Pleite-Risiko: Vermögen fällt unter 10.000 € REAL ODER Shortfall tritt auf
   // HINWEIS: Dies ist ein PFAD-Kriterium - wenn es irgendwann eintritt, zählt es.
   // Daher NICHT komplementär zur Erfolgsrate (ein Lauf kann temporär "Pleite" sein,
   // sich aber erholen und als "Erfolg" enden).
+  // Schwelle ist REAL: 10.000€ in heutiger Kaufkraft
   let ruinCount = 0;
   for (const history of allHistories) {
     let isRuin = false;
     for (let m = savingsMonths; m < numMonths; m++) {
-      if ((history[m]?.total || 0) < 10000 || (history[m]?.shortfall || 0) > 0.01) {
+      const monthInflation = history[m]?.cumulative_inflation || 1;
+      const ruinThresholdNominal = RUIN_THRESHOLD_REAL * monthInflation;
+      if ((history[m]?.total || 0) < ruinThresholdNominal || (history[m]?.shortfall || 0) > 0.01) {
         isRuin = true;
         break;
       }
@@ -2741,13 +2767,17 @@ function analyzeMonteCarloResults(allHistories, params) {
   const nominalReturnPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
   const realReturnPa = ((1 + nominalReturnPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
   
-  // Perzentile pro Monat berechnen
+  // Perzentile pro Monat berechnen (nominal und real)
   const percentiles = {
+    p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
+  };
+  const percentilesReal = {
     p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
   };
   
   for (let month = 0; month < numMonths; month++) {
     const monthTotals = allHistories.map(h => h[month]?.total || 0).sort((a, b) => a - b);
+    const monthTotalsReal = allHistories.map(h => h[month]?.total_real || 0).sort((a, b) => a - b);
     
     percentiles.p5.push(percentile(monthTotals, 5));
     percentiles.p10.push(percentile(monthTotals, 10));
@@ -2756,6 +2786,14 @@ function analyzeMonteCarloResults(allHistories, params) {
     percentiles.p75.push(percentile(monthTotals, 75));
     percentiles.p90.push(percentile(monthTotals, 90));
     percentiles.p95.push(percentile(monthTotals, 95));
+    
+    percentilesReal.p5.push(percentile(monthTotalsReal, 5));
+    percentilesReal.p10.push(percentile(monthTotalsReal, 10));
+    percentilesReal.p25.push(percentile(monthTotalsReal, 25));
+    percentilesReal.p50.push(percentile(monthTotalsReal, 50));
+    percentilesReal.p75.push(percentile(monthTotalsReal, 75));
+    percentilesReal.p90.push(percentile(monthTotalsReal, 90));
+    percentilesReal.p95.push(percentile(monthTotalsReal, 95));
   }
   
   // Jahre-Array für X-Achse
@@ -2769,6 +2807,7 @@ function analyzeMonteCarloResults(allHistories, params) {
     finalTotals,
     finalTotalsReal,
     percentiles,
+    percentilesReal,
     months,
     medianEnd: percentile(finalTotals, 50),
     p10End: percentile(finalTotals, 10),
@@ -2991,16 +3030,19 @@ function renderMonteCarloGraph(results) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
   
-  const { percentiles, months, savingsYears } = results;
+  const { percentiles, percentilesReal, months, savingsYears } = results;
   if (!months.length) return;
+  
+  // Wähle zwischen nominalen und realen Perzentilen basierend auf Toggle
+  const activePercentiles = mcUseRealValues && percentilesReal ? percentilesReal : percentiles;
   
   const padX = 60;
   const padY = 50;
   const xDenom = Math.max(months.length - 1, 1);
   
   // Min/Max für beide Skalierungen
-  const minVal = Math.max(1000, Math.min(...percentiles.p5.filter(v => v > 0)));
-  const maxVal = Math.max(minVal * 10, ...percentiles.p95);
+  const minVal = Math.max(1000, Math.min(...activePercentiles.p5.filter(v => v > 0)));
+  const maxVal = Math.max(minVal * 10, ...activePercentiles.p95);
   
   let toXY;
   
@@ -3119,9 +3161,9 @@ function renderMonteCarloGraph(results) {
     ctx.fill();
   };
   
-  // Zeichne Bänder (von außen nach innen)
-  fillBand(percentiles.p10, percentiles.p90, "rgba(99, 102, 241, 0.15)"); // 80% Band
-  fillBand(percentiles.p25, percentiles.p75, "rgba(99, 102, 241, 0.25)"); // 50% Band
+  // Zeichne Bänder (von außen nach innen) - verwende activePercentiles
+  fillBand(activePercentiles.p10, activePercentiles.p90, "rgba(99, 102, 241, 0.15)"); // 80% Band
+  fillBand(activePercentiles.p25, activePercentiles.p75, "rgba(99, 102, 241, 0.25)"); // 50% Band
   
   // Individuelle Pfade (falls aktiviert)
   if (results.showIndividual && results.allHistories?.length) {
@@ -3131,7 +3173,9 @@ function renderMonteCarloGraph(results) {
     for (const history of results.allHistories) {
       ctx.beginPath();
       history.forEach((row, i) => {
-        const [x, y] = toXY(i, row.total);
+        // Verwende real oder nominal basierend auf Toggle
+        const value = mcUseRealValues ? (row.total_real || row.total) : row.total;
+        const [x, y] = toXY(i, value);
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
@@ -3143,7 +3187,7 @@ function renderMonteCarloGraph(results) {
   ctx.strokeStyle = "#f59e0b";
   ctx.lineWidth = 2.5;
   ctx.beginPath();
-  percentiles.p50.forEach((val, i) => {
+  activePercentiles.p50.forEach((val, i) => {
     const [x, y] = toXY(i, val);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -3155,7 +3199,7 @@ function renderMonteCarloGraph(results) {
   ctx.strokeStyle = "rgba(239, 68, 68, 0.6)";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  percentiles.p5.forEach((val, i) => {
+  activePercentiles.p5.forEach((val, i) => {
     const [x, y] = toXY(i, val);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -3164,7 +3208,7 @@ function renderMonteCarloGraph(results) {
   
   ctx.strokeStyle = "rgba(34, 197, 94, 0.6)";
   ctx.beginPath();
-  percentiles.p95.forEach((val, i) => {
+  activePercentiles.p95.forEach((val, i) => {
     const [x, y] = toXY(i, val);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -3229,6 +3273,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+      use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
       capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
@@ -3311,7 +3356,11 @@ function handleMcHover(evt) {
     return;
   }
   
-  const { percentiles, months, savingsYears } = results;
+  const { percentiles, percentilesReal, months, savingsYears } = results;
+  // Wähle Perzentile basierend auf Real/Nominal Toggle
+  const activePercentiles = mcUseRealValues && percentilesReal ? percentilesReal : percentiles;
+  const valueLabel = mcUseRealValues ? " (real)" : "";
+  
   const xDenom = Math.max(months.length - 1, 1);
   const idxFloat = (x - padX) / (width - 2 * padX) * xDenom;
   const idx = Math.max(0, Math.min(months.length - 1, Math.round(idxFloat)));
@@ -3322,13 +3371,13 @@ function handleMcHover(evt) {
   const phase = month <= savingsYears * MONTHS_PER_YEAR ? "Anspar" : "Entnahme";
   
   const lines = [
-    `Jahr ${year}, Monat ${monthInYear} (${phase})`,
+    `Jahr ${year}, Monat ${monthInYear} (${phase})${valueLabel}`,
     `──────────────────`,
-    `95% (Best):  ${formatCurrency(percentiles.p95[idx])}`,
-    `75%:         ${formatCurrency(percentiles.p75[idx])}`,
-    `50% Median:  ${formatCurrency(percentiles.p50[idx])}`,
-    `25%:         ${formatCurrency(percentiles.p25[idx])}`,
-    `5% (Worst):  ${formatCurrency(percentiles.p5[idx])}`,
+    `95% (Best):  ${formatCurrency(activePercentiles.p95[idx])}`,
+    `75%:         ${formatCurrency(activePercentiles.p75[idx])}`,
+    `50% Median:  ${formatCurrency(activePercentiles.p50[idx])}`,
+    `25%:         ${formatCurrency(activePercentiles.p25[idx])}`,
+    `5% (Worst):  ${formatCurrency(activePercentiles.p5[idx])}`,
   ];
   
   tooltip.textContent = lines.join("\n");
