@@ -93,6 +93,15 @@
               </ul>
             </li>
             <li><strong>Besteuerung von Tagesgeldzinsen:</strong> Zinsen werden voll besteuert (keine Teilfreistellung)</li>
+            <li><strong>Vorabpauschale (thesaurierende ETFs):</strong> Jährliche Steuer auf fiktive Erträge
+              <ul>
+                <li>Berechnung: <code>ETF-Wert × Basiszins × 0,7</code> (max. tatsächlicher Wertzuwachs)</li>
+                <li>Basiszins wird von der Bundesbank festgelegt (2024: 2,29%, 2025: 2,53%)</li>
+                <li>30% Teilfreistellung für Aktienfonds gilt auch hier</li>
+                <li>Wird vom Sparerpauschbetrag abgezogen, Rest wird versteuert</li>
+                <li>Bei negativer Wertentwicklung: keine Vorabpauschale</li>
+              </ul>
+            </li>
           </ul>
         </section>
 
@@ -263,6 +272,11 @@
                 <option value="8">8% (Bayern, Baden-W\u00fcrttemberg)</option>
                 <option value="9">9% (andere Bundesl\u00e4nder)</option>
               </select>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Basiszins für die Vorabpauschale bei thesaurierenden ETFs. Wird von der Bundesbank festgelegt (2024: 2,29%, 2025: 2,53%).">Basiszins Vorabpauschale (%)</span>
+              <input type="number" step="0.01" id="basiszins" value="2.53">
+              <small class="field-hint">2024: 2,29% | 2025: 2,53%</small>
             </label>
           </div>
         </div>
@@ -499,6 +513,10 @@
             <div class="stat-card">
               <span class="stat-label">Steuern gesamt</span>
               <span class="stat-value" id="stat-total-tax">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">davon Vorabpauschale</span>
+              <span class="stat-value" id="stat-vorabpauschale">-</span>
             </div>
             <div class="stat-card">
               <span class="stat-label">Effektive Entnahmerate</span>

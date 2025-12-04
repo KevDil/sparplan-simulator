@@ -108,6 +108,7 @@ function applyStoredValues() {
     special_interval_years_withdrawal: "special_withdraw_interval",
     inflation_rate_pa: "inflation_rate",
     sparerpauschbetrag: "sparerpauschbetrag",
+    basiszins: "basiszins",
   };
   
   // Select-Elemente (Dropdowns)
@@ -174,6 +175,7 @@ function getDefaultValues() {
     inflation_rate: 2.0,
     sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer: "keine",
+    basiszins: 2.53,
   };
 }
 
@@ -216,7 +218,7 @@ function exportToCsv(history, params = lastParams) {
     [],
   ];
 
-  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern"];
+  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern", "Vorabpauschale"];
   const dataRows = history.map(r => [
     r.year,
     r.month,
@@ -228,6 +230,7 @@ function exportToCsv(history, params = lastParams) {
     (r.return_gain || 0).toFixed(2),
     (r.withdrawal || 0).toFixed(2),
     (r.tax_paid || 0).toFixed(2),
+    (r.vorabpauschale_tax || 0).toFixed(2),
   ]);
   
   const csvContent = [...settingsRows, dataHeader, ...dataRows].map(row => row.join(";")).join("\n");
@@ -868,6 +871,7 @@ function simulate(params) {
     inflation_rate_pa = 0,
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
+    basiszins = 2.53,
   } = params;
 
   // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
@@ -903,20 +907,27 @@ function simulate(params) {
   let basePayoutValue = null; // Basis-Entnahme für Inflationsanpassung
 
   let cumulativeInflation = 1;
+  
+  // Vorabpauschale-Tracking: ETF-Wert am Jahresanfang
+  let etfValueYearStart = start_etf;
+  let vorabpauschaleTaxYearly = 0;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
     const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
+    const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
     
     // Inflation kumulieren
     cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
 
-    // Neues Steuerjahr -> Freibetrag zurücksetzen
+    // Neues Steuerjahr -> Freibetrag zurücksetzen und ETF-Wert am Jahresanfang speichern
     if (yearIdx !== currentTaxYear) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
+      etfValueYearStart = totalEtfValueStart;
+      vorabpauschaleTaxYearly = 0;
     }
 
     // Wertentwicklung vor Cashflows
@@ -1092,6 +1103,43 @@ function simulate(params) {
       }
     }
 
+    // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
+    // Für thesaurierende ETFs wird die Vorabpauschale am Jahresende berechnet
+    let vorabpauschaleTax = 0;
+    if (monthInYear === 12 && basiszins > 0 && etfValueYearStart > 0) {
+      const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
+      const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
+      
+      // Basisertrag = ETF-Wert am Jahresanfang × Basiszins × 0,7
+      const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
+      
+      // Tatsächlicher Wertzuwachs im Jahr (ohne Einzahlungen - vereinfacht)
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart);
+      
+      // Vorabpauschale = min(Basisertrag, tatsächlicher Wertzuwachs)
+      // Bei negativer Wertentwicklung: keine Vorabpauschale
+      const vorabpauschale = Math.min(basisertrag, actualGain);
+      
+      if (vorabpauschale > 0) {
+        // Teilfreistellung: nur 70% sind steuerpflichtig
+        const taxableVorabpauschale = vorabpauschale * TEILFREISTELLUNG;
+        
+        // Sparerpauschbetrag nutzen
+        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
+        const taxableAfterFreibetrag = Math.max(0, taxableVorabpauschale - remainingFreibetrag);
+        yearlyUsedFreibetrag += Math.min(taxableVorabpauschale, remainingFreibetrag);
+        
+        // Steuer berechnen
+        vorabpauschaleTax = taxableAfterFreibetrag * taxRate;
+        vorabpauschaleTaxYearly = vorabpauschaleTax;
+        
+        // Steuer vom Tagesgeld abziehen (Broker zieht es vom Verrechnungskonto)
+        savings -= vorabpauschaleTax;
+        if (savings < 0) savings = 0;
+      }
+    }
+    tax_paid += vorabpauschaleTax;
+
     // Gesamtwerte
     const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const etf_value = totalEtfShares * currentEtfPrice;
@@ -1116,6 +1164,7 @@ function simulate(params) {
       monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
       monthly_payout_real: monthlyPayout / cumulativeInflation,
       tax_paid,
+      vorabpauschale_tax: vorabpauschaleTax,
       payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
@@ -1248,6 +1297,10 @@ function renderStats(history, params) {
   // Steuern gesamt
   const totalTax = history.reduce((sum, r) => sum + (r.tax_paid || 0), 0);
   document.getElementById("stat-total-tax").textContent = formatCurrency(totalTax);
+  
+  // Vorabpauschale gesamt
+  const totalVorabpauschale = history.reduce((sum, r) => sum + (r.vorabpauschale_tax || 0), 0);
+  document.getElementById("stat-vorabpauschale").textContent = formatCurrency(totalVorabpauschale);
 
   // Effektive Entnahmerate (bezogen auf Startvermögen Entnahmephase)
   if (entnahmeRows.length > 0 && displayValues.length > 0) {
@@ -1560,6 +1613,7 @@ form.addEventListener("submit", (e) => {
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+      basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       rent_mode: mode,
     };
 
@@ -1804,6 +1858,7 @@ function simulateStochastic(params, annualVolatility) {
     inflation_rate_pa = 0,
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
+    basiszins = 2.53,
   } = params;
 
   let kirchensteuerSatz = 0;
@@ -1835,17 +1890,23 @@ function simulateStochastic(params, annualVolatility) {
   let entnahmeStartTotal = null;
   let basePayoutValue = null;
   let cumulativeInflation = 1;
+  
+  // Vorabpauschale-Tracking
+  let etfValueYearStart = start_etf;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
+    const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
     const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
     
     cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
+    const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
 
     if (yearIdx !== currentTaxYear) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
+      etfValueYearStart = totalEtfValueStart;
     }
 
     // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
@@ -2008,6 +2069,29 @@ function simulateStochastic(params, annualVolatility) {
         withdrawal_paid = withdrawal - Math.max(0, remaining);
       }
     }
+
+    // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
+    let vorabpauschaleTax = 0;
+    if (monthInYear === 12 && basiszins > 0 && etfValueYearStart > 0) {
+      const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
+      const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
+      
+      const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart);
+      const vorabpauschale = Math.min(basisertrag, actualGain);
+      
+      if (vorabpauschale > 0) {
+        const taxableVorabpauschale = vorabpauschale * TEILFREISTELLUNG;
+        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
+        const taxableAfterFreibetrag = Math.max(0, taxableVorabpauschale - remainingFreibetrag);
+        yearlyUsedFreibetrag += Math.min(taxableVorabpauschale, remainingFreibetrag);
+        
+        vorabpauschaleTax = taxableAfterFreibetrag * taxRate;
+        savings -= vorabpauschaleTax;
+        if (savings < 0) savings = 0;
+      }
+    }
+    tax_paid += vorabpauschaleTax;
 
     const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const etf_value = totalEtfShares * currentEtfPrice;
@@ -2691,6 +2775,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+      basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       rent_mode: mode,
     };
     
