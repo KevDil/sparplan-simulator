@@ -24,8 +24,6 @@
   <!-- Styles -->
   <link rel="stylesheet" href="styles.css">
   
-  <!-- jsPDF for PDF Export -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 </head>
 <body>
   <!-- Accessibility: Skip Link für Keyboard-Navigation -->
@@ -135,6 +133,11 @@
             <label class="field">
               <span class="field-label" data-tooltip="Aktueller Wert deines ETF-Depots zu Beginn der Simulation.">Start ETF (EUR)</span>
               <input type="number" step="100" id="start_etf" value="100" min="0" max="100000000">
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Ursprünglicher Kaufpreis deines ETF-Altbestands. Wichtig für korrekte Steuerberechnung. Leer lassen oder 0 = kein unrealisierter Gewinn.">Einstand Altbestand (EUR)</span>
+              <input type="number" step="100" id="start_etf_cost_basis" value="0" min="0" max="100000000">
+              <small class="field-hint">0 = keine Altgewinne (Einstand = aktueller Wert)</small>
             </label>
             <label class="field">
               <span class="field-label" data-tooltip="Jährlicher Zinssatz für dein Tagesgeldkonto. Aktuelle Zinsen liegen bei 2-4%.">Tagesgeld Zins p.a. (%)</span>
@@ -306,9 +309,9 @@
           </div>
           <div class="grid">
             <label class="field">
-              <span class="field-label" data-tooltip="Wie oft die Simulation mit zufälligen Renditen durchgeführt wird. Mehr = genauere Statistik, aber länger.">Anzahl Simulationen</span>
-              <input type="number" step="100" id="mc_iterations" value="1000" min="100" max="100000" aria-describedby="mc-iterations-hint">
-              <small class="field-hint">100-100.000 Durchläufe - Viele Durchläufe können sehr lange dauern.</small>
+              <span class="field-label" data-tooltip="Wie oft die Simulation mit zufälligen Renditen durchgeführt wird. Mehr = genauere Statistik, aber länger. Empfohlen: 1.000-5.000.">Anzahl Simulationen</span>
+              <input type="number" step="100" id="mc_iterations" value="1000" min="100" max="10000" aria-describedby="mc-iterations-hint">
+              <small class="field-hint">100-10.000 Durchläufe (empfohlen: 1.000-5.000 für gute Balance)</small>
             </label>
             <label class="field">
               <span class="field-label" data-tooltip="Standardabweichung der jährlichen ETF-Rendite. Höhere Werte = größere Schwankungen. MSCI World: ~15-17%.">ETF Volatilität p.a. (%)</span>

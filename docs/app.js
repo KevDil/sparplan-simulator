@@ -110,6 +110,7 @@ function applyStoredValues() {
   const fieldMap = {
     start_savings: "start_savings",
     start_etf: "start_etf",
+    start_etf_cost_basis: "start_etf_cost_basis",
     savings_rate_pa: "savings_rate",
     etf_rate_pa: "etf_rate",
     etf_ter_pa: "etf_ter",
@@ -178,6 +179,7 @@ function getDefaultValues() {
   return {
     start_savings: 4000,
     start_etf: 100,
+    start_etf_cost_basis: 0,
     savings_rate: 3.0,
     etf_rate: 6.0,
     etf_ter: 0.2,
@@ -973,6 +975,7 @@ function simulate(params, volatility = 0) {
   const {
     start_savings,
     start_etf,
+    start_etf_cost_basis = 0,
     monthly_savings,
     monthly_etf,
     savings_rate_pa,
@@ -1019,7 +1022,12 @@ function simulate(params, volatility = 0) {
   let currentEtfPrice = INITIAL_ETF_PRICE;
   const etfLots = [];
   if (start_etf > 0) {
-    etfLots.push({ amount: start_etf / currentEtfPrice, price: currentEtfPrice, monthIdx: 0 });
+    const shares = start_etf / currentEtfPrice;
+    // Berechne Einstandspreis: wenn cost_basis angegeben und > 0, nutze diesen
+    // sonst Einstand = aktueller Wert (kein unrealisierter Gewinn)
+    const effectiveCostBasis = start_etf_cost_basis > 0 ? start_etf_cost_basis : start_etf;
+    const costPricePerShare = effectiveCostBasis / shares;
+    etfLots.push({ amount: shares, price: costPricePerShare, monthIdx: 0 });
   }
 
   // ETF-Rendite nach Abzug der TER
@@ -1315,8 +1323,9 @@ function simulate(params, volatility = 0) {
           zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
         }
         
-        // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
-        const lotBasisertrag = basisertragBase * (basiszins / 100) * 0.7 * zeitanteil;
+        // Basisertrag = Grundlage × Basiszins × Zeitanteil
+        // HINWEIS: Teilfreistellung (0,7) wird erst bei der Besteuerung angewendet, nicht hier!
+        const lotBasisertrag = basisertragBase * (basiszins / 100) * zeitanteil;
         
         // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
         const lotValueYearEnd = lot.amount * currentEtfPrice;
@@ -1644,21 +1653,56 @@ function renderStats(history, params) {
     purchasingPowerLossEl.textContent = `${nf2.format(purchasingPowerLoss)} %`;
   }
   
-  // Reale Rendite p.a. (nach Inflation)
-  // Bessere Berechnung: Nominale Rendite minus Inflation
-  const nominalReturnPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
-  const inflationRatePa = params.inflation_rate_pa || 2;
-  // Fisher-Gleichung: (1 + real) = (1 + nominal) / (1 + inflation)
-  let realReturnPa = ((1 + nominalReturnPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
-  
-  // Bei Totalverlust (Vermögen aufgebraucht) spezielle Anzeige
-  const endValueReal = lastRow.total_real || lastRow.total;
+  // Reale Rendite p.a. - berechnet aus tatsächlichem Vermögensverlauf
+  // Nur für Ansparphase sinnvoll; in der Entnahmephase dominieren Auszahlungen
   const realReturnPaEl = document.getElementById("stat-real-return-pa");
   if (realReturnPaEl) {
+    const endValueReal = lastRow.total_real || lastRow.total;
+    
     if (endValueReal < 1) {
       realReturnPaEl.textContent = "Vermögen aufgebraucht";
+    } else if (entnahmeRows.length > 0) {
+      // Entnahmephase aktiv: Berechne tatsächliche reale Performance aus der Ansparphase
+      // (Entnahme verzerrt die Renditeberechnung)
+      const ansparEnd = ansparRows.length > 0 ? ansparRows[ansparRows.length - 1] : null;
+      if (ansparEnd) {
+        const startTotal = (params.start_savings || 0) + (params.start_etf || 0);
+        const totalContribs = ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
+        const costBasis = startTotal + totalContribs;
+        const ansparEndValue = ansparEnd.total || 0;
+        const yearsAnsparen = params.savings_years || 1;
+        
+        if (costBasis > 0 && ansparEndValue > 0) {
+          // Approximierte CAGR unter Berücksichtigung von Einzahlungen
+          // (Modified Dietz-Näherung für grobe Schätzung)
+          const gain = ansparEndValue - costBasis;
+          const avgInvested = startTotal + totalContribs * 0.5; // Annahme: lineare Einzahlung
+          const nominalCagr = avgInvested > 0 ? Math.pow(ansparEndValue / avgInvested, 1 / yearsAnsparen) - 1 : 0;
+          const inflationRate = params.inflation_rate_pa / 100 || 0.02;
+          const realCagr = ((1 + nominalCagr) / (1 + inflationRate) - 1) * 100;
+          realReturnPaEl.textContent = `${nf2.format(realCagr)} % (Anspar)`;
+        } else {
+          realReturnPaEl.textContent = "-";
+        }
+      } else {
+        realReturnPaEl.textContent = "-";
+      }
     } else {
-      realReturnPaEl.textContent = `${nf2.format(realReturnPa)} %`;
+      // Nur Ansparphase: Berechne CAGR aus tatsächlichem Verlauf
+      const startTotal = (params.start_savings || 0) + (params.start_etf || 0);
+      const totalContribs = ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
+      const endValue = lastRow.total || 0;
+      const yearsTotal = history.length / 12;
+      const avgInvested = startTotal + totalContribs * 0.5;
+      
+      if (avgInvested > 0 && endValue > 0 && yearsTotal > 0) {
+        const nominalCagr = Math.pow(endValue / avgInvested, 1 / yearsTotal) - 1;
+        const inflationRate = params.inflation_rate_pa / 100 || 0.02;
+        const realCagr = ((1 + nominalCagr) / (1 + inflationRate) - 1) * 100;
+        realReturnPaEl.textContent = `${nf2.format(realCagr)} %`;
+      } else {
+        realReturnPaEl.textContent = "-";
+      }
     }
   }
   
@@ -1947,6 +1991,7 @@ form.addEventListener("submit", (e) => {
     const params = {
       start_savings: readNumber("start_savings", { min: 0 }),
       start_etf: readNumber("start_etf", { min: 0 }),
+      start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
       monthly_savings: readNumber("monthly_savings", { min: 0 }),
       monthly_etf: readNumber("monthly_etf", { min: 0 }),
       savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
@@ -3130,6 +3175,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
     const params = {
       start_savings: readNumber("start_savings", { min: 0 }),
       start_etf: readNumber("start_etf", { min: 0 }),
+      start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
       monthly_savings: readNumber("monthly_savings", { min: 0 }),
       monthly_etf: readNumber("monthly_etf", { min: 0 }),
       savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
