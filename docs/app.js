@@ -3111,19 +3111,19 @@ function renderMonteCarloGraph(results) {
   const padY = 50;
   const xDenom = Math.max(months.length - 1, 1);
   
-  // KORRIGIERT: Prüfe ob P5 oder P10 Nullen enthalten (echte Pleite-Szenarien)
+  // Prüfe ob P5 oder P10 Nullen enthalten (echte Pleite-Szenarien)
   const hasZeroScenarios = activePercentiles.p5.some(v => v <= 0) || activePercentiles.p10.some(v => v <= 0);
   
-  // Bei Log-Skala mit Null-Szenarien: automatisch auf linear umschalten und Hinweis anzeigen
-  let effectiveLogScale = mcUseLogScale;
-  if (mcUseLogScale && hasZeroScenarios) {
-    effectiveLogScale = false; // Erzwinge lineare Skala bei Null-Szenarien
-  }
+  // Log-Skala ist immer erlaubt - Nullen werden auf Minimalwert geklemmt
+  const effectiveLogScale = mcUseLogScale;
+  
+  // Bei Log-Skala: Minimalwert für Darstellung (Nullen werden hierauf geklemmt)
+  const LOG_FLOOR = 100; // 100€ als Boden für Log-Skala
   
   // Min/Max für beide Skalierungen
   const positiveP5 = activePercentiles.p5.filter(v => v > 0);
   const minVal = effectiveLogScale 
-    ? Math.max(100, positiveP5.length > 0 ? Math.min(...positiveP5) : 100)
+    ? Math.max(LOG_FLOOR, positiveP5.length > 0 ? Math.min(...positiveP5) : LOG_FLOOR)
     : 0; // Lineare Skala beginnt bei 0
   const maxVal = Math.max(minVal * 10, ...activePercentiles.p95);
   
@@ -3315,6 +3315,15 @@ function renderMonteCarloGraph(results) {
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     ctx.fillText("Entnahme →", sx - 6, padY + 20);
+  }
+  
+  // Hinweis bei Log-Skala mit Null-Szenarien
+  if (effectiveLogScale && hasZeroScenarios) {
+    ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
+    ctx.font = "bold 11px 'Segoe UI', sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("⚠ P5/P10 enthält 0€ (als " + LOG_FLOOR + "€ dargestellt)", padX + 10, height - padY - 8);
   }
   
   mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
