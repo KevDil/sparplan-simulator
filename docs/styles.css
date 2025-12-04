@@ -1106,6 +1106,36 @@ canvas#mc-graph {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mc-stats-icon {
+  width: 16px;
+  height: 16px;
+  stroke: var(--accent-2);
+}
+
+.mc-stats-desc {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.mc-stats-desc strong {
+  color: var(--text);
+}
+
+/* SoRR Main Card */
+.stat-card--sorr-main {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1)) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+
+.stat-card--sorr-main .stat-value {
+  color: #a78bfa;
 }
 
 /* Chart Scale Toggle */

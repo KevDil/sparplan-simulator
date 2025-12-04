@@ -277,6 +277,15 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     ["Endvermögen real (10%-90%)", `${results.p10EndReal.toFixed(2)} - ${results.p90EndReal.toFixed(2)}`],
     ["Vermögen bei Rentenbeginn (Median)", results.retirementMedian.toFixed(2)],
     [],
+    ["=== SEQUENCE-OF-RETURNS RISK ===", ""],
+    ["SoRR-Spreizung", `${results.sorr?.sorRiskScore?.toFixed(1) || 0}%`],
+    ["Früher Crash-Effekt", `${results.sorr?.earlyBadImpact?.toFixed(1) || 0}%`],
+    ["Früher Boom-Effekt", `+${results.sorr?.earlyGoodImpact?.toFixed(1) || 0}%`],
+    ["Korrelation frühe Rendite <-> Endvermögen", `${((results.sorr?.correlationEarlyReturns || 0) * 100).toFixed(1)}%`],
+    ["Endvermögen (schlechte Sequenz)", (results.sorr?.worstSequenceEnd || 0).toFixed(2)],
+    ["Endvermögen (gute Sequenz)", (results.sorr?.bestSequenceEnd || 0).toFixed(2)],
+    ["Kritisches Fenster", `Jahr 1-${results.sorr?.vulnerabilityWindow || 5}`],
+    [],
   ];
   
   // Perzentile pro Monat
@@ -646,7 +655,32 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
       }
       y += 5;
     }
-    y += 5;
+    y += 10;
+    
+    // Sequence-of-Returns Risk
+    if (results.sorr && results.sorr.sorRiskScore > 0) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Sequence-of-Returns Risk", margin, y);
+      y += 6;
+      
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      
+      const sorrStats = [
+        ["SoRR-Spreizung", `${results.sorr.sorRiskScore.toFixed(0)}%`],
+        ["Früher Crash-Effekt", `${results.sorr.earlyBadImpact.toFixed(0)}%`],
+        ["Früher Boom-Effekt", `+${results.sorr.earlyGoodImpact.toFixed(0)}%`],
+        ["Korrelation frühe Rendite ↔ Ende", `${(results.sorr.correlationEarlyReturns * 100).toFixed(0)}%`],
+        ["Kritisches Fenster", `Jahr 1-${results.sorr.vulnerabilityWindow}`],
+      ];
+      
+      for (const [label, val] of sorrStats) {
+        doc.text(`${label}: ${val}`, margin, y);
+        y += 4;
+      }
+      y += 5;
+    }
     
     // Eingabeparameter (Seite 2)
     doc.addPage();
@@ -2055,6 +2089,140 @@ async function runMonteCarloSimulation(params, iterations, volatility, showIndiv
   return results;
 }
 
+// Berechnet Sequence-of-Returns Risk Metriken
+function analyzeSequenceOfReturnsRisk(allHistories, params) {
+  const savingsMonths = params.savings_years * MONTHS_PER_YEAR;
+  const withdrawalMonths = params.withdrawal_years * MONTHS_PER_YEAR;
+  const numMonths = allHistories[0]?.length || 0;
+  const numSims = allHistories.length;
+  
+  if (withdrawalMonths === 0 || numSims < 10) {
+    return {
+      sorRiskScore: 0,
+      earlyBadImpact: 0,
+      earlyGoodImpact: 0,
+      correlationEarlyReturns: 0,
+      worstSequenceEnd: 0,
+      bestSequenceEnd: 0,
+      medianSequenceEnd: 0,
+      vulnerabilityWindow: 0,
+    };
+  }
+  
+  // Berechne frühe Renditen (erste 5 Jahre der Entnahmephase) für jede Simulation
+  const earlyYears = Math.min(5, params.withdrawal_years);
+  const earlyMonths = earlyYears * MONTHS_PER_YEAR;
+  
+  const simData = allHistories.map(history => {
+    // Vermögen am Start der Entnahme
+    const startWealth = history[savingsMonths - 1]?.total || history[savingsMonths]?.total || 0;
+    
+    // Vermögen nach den frühen Jahren
+    const earlyEndIdx = Math.min(savingsMonths + earlyMonths - 1, numMonths - 1);
+    const earlyEndWealth = history[earlyEndIdx]?.total || 0;
+    
+    // Frühe Rendite (annualisiert)
+    const earlyReturn = startWealth > 0 
+      ? Math.pow(earlyEndWealth / startWealth, 12 / earlyMonths) - 1 
+      : 0;
+    
+    // Endvermögen
+    const endWealth = history[numMonths - 1]?.total || 0;
+    
+    return { startWealth, earlyReturn, endWealth, history };
+  });
+  
+  // Sortiere nach früher Rendite
+  simData.sort((a, b) => a.earlyReturn - b.earlyReturn);
+  
+  // Unterteile in Quintile
+  const quintileSize = Math.floor(numSims / 5);
+  const worstEarlyQuintile = simData.slice(0, quintileSize);
+  const bestEarlyQuintile = simData.slice(-quintileSize);
+  const middleQuintiles = simData.slice(quintileSize * 2, quintileSize * 3);
+  
+  // Durchschnittliches Endvermögen pro Quintil
+  const avgWorst = worstEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / worstEarlyQuintile.length;
+  const avgBest = bestEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / bestEarlyQuintile.length;
+  const avgMiddle = middleQuintiles.reduce((s, d) => s + d.endWealth, 0) / middleQuintiles.length;
+  
+  // Korrelation zwischen früher Rendite und Endvermögen (Pearson)
+  const meanEarlyReturn = simData.reduce((s, d) => s + d.earlyReturn, 0) / numSims;
+  const meanEndWealth = simData.reduce((s, d) => s + d.endWealth, 0) / numSims;
+  
+  let numerator = 0;
+  let denomEarly = 0;
+  let denomEnd = 0;
+  
+  for (const d of simData) {
+    const diffEarly = d.earlyReturn - meanEarlyReturn;
+    const diffEnd = d.endWealth - meanEndWealth;
+    numerator += diffEarly * diffEnd;
+    denomEarly += diffEarly * diffEarly;
+    denomEnd += diffEnd * diffEnd;
+  }
+  
+  const correlation = (denomEarly > 0 && denomEnd > 0) 
+    ? numerator / Math.sqrt(denomEarly * denomEnd) 
+    : 0;
+  
+  // SoRR Score: Wie stark beeinflusst die frühe Rendite das Endergebnis?
+  // Basiert auf der Differenz zwischen bestem und schlechtestem Quintil
+  const avgStartWealth = simData.reduce((s, d) => s + d.startWealth, 0) / numSims;
+  const sorRiskScore = avgStartWealth > 0 
+    ? ((avgBest - avgWorst) / avgStartWealth) * 100 
+    : 0;
+  
+  // Impact: Prozentuale Abweichung vom Median
+  const earlyBadImpact = avgMiddle > 0 ? ((avgWorst - avgMiddle) / avgMiddle) * 100 : 0;
+  const earlyGoodImpact = avgMiddle > 0 ? ((avgBest - avgMiddle) / avgMiddle) * 100 : 0;
+  
+  // Vulnerabilitätsfenster: In welchem Jahr ist die Sensitivität am höchsten?
+  // Berechne Korrelation für jedes Jahr der Entnahmephase
+  let maxCorrelationYear = 1;
+  let maxCorrelation = 0;
+  
+  for (let year = 1; year <= Math.min(10, params.withdrawal_years); year++) {
+    const yearEndIdx = Math.min(savingsMonths + year * MONTHS_PER_YEAR - 1, numMonths - 1);
+    
+    const yearData = allHistories.map(h => {
+      const startW = h[savingsMonths - 1]?.total || h[savingsMonths]?.total || 0;
+      const yearEndW = h[yearEndIdx]?.total || 0;
+      const endW = h[numMonths - 1]?.total || 0;
+      return { yearReturn: startW > 0 ? yearEndW / startW - 1 : 0, endW };
+    });
+    
+    const meanYR = yearData.reduce((s, d) => s + d.yearReturn, 0) / numSims;
+    const meanEW = yearData.reduce((s, d) => s + d.endW, 0) / numSims;
+    
+    let num = 0, denYR = 0, denEW = 0;
+    for (const d of yearData) {
+      const dYR = d.yearReturn - meanYR;
+      const dEW = d.endW - meanEW;
+      num += dYR * dEW;
+      denYR += dYR * dYR;
+      denEW += dEW * dEW;
+    }
+    
+    const corr = (denYR > 0 && denEW > 0) ? Math.abs(num / Math.sqrt(denYR * denEW)) : 0;
+    if (corr > maxCorrelation) {
+      maxCorrelation = corr;
+      maxCorrelationYear = year;
+    }
+  }
+  
+  return {
+    sorRiskScore: Math.abs(sorRiskScore),
+    earlyBadImpact,
+    earlyGoodImpact,
+    correlationEarlyReturns: correlation,
+    worstSequenceEnd: avgWorst,
+    bestSequenceEnd: avgBest,
+    medianSequenceEnd: avgMiddle,
+    vulnerabilityWindow: maxCorrelationYear,
+  };
+}
+
 function analyzeMonteCarloResults(allHistories, params) {
   const numMonths = allHistories[0]?.length || 0;
   const numSims = allHistories.length;
@@ -2063,6 +2231,9 @@ function analyzeMonteCarloResults(allHistories, params) {
   // Sammle Endvermögen
   const finalTotals = allHistories.map(h => h[h.length - 1]?.total || 0).sort((a, b) => a - b);
   const finalTotalsReal = allHistories.map(h => h[h.length - 1]?.total_real || 0).sort((a, b) => a - b);
+  
+  // Sequence-of-Returns Risk Analyse
+  const sorr = analyzeSequenceOfReturnsRisk(allHistories, params);
   
   // Vermögen bei Rentenbeginn (Index = savingsMonths - 1, da 0-basiert)
   const retirementIdx = Math.min(savingsMonths - 1, numMonths - 1);
@@ -2146,6 +2317,8 @@ function analyzeMonteCarloResults(allHistories, params) {
       allHistories.map(h => h[retirementIdx]?.total_real || 0).sort((a, b) => a - b), 
       50
     ),
+    // Sequence-of-Returns Risk
+    sorr,
   };
 }
 
@@ -2204,6 +2377,60 @@ function renderMonteCarloStats(results) {
     successEl.classList.add("success-medium");
   } else {
     successEl.classList.add("success-low");
+  }
+  
+  // Sequence-of-Returns Risk Statistiken
+  if (results.sorr) {
+    const sorr = results.sorr;
+    
+    // SoRR Score
+    const sorrScoreEl = document.getElementById("mc-sorr-score");
+    if (sorrScoreEl) {
+      sorrScoreEl.textContent = `${sorr.sorRiskScore.toFixed(0)}%`;
+      sorrScoreEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+      if (sorr.sorRiskScore <= 50) {
+        sorrScoreEl.classList.add("stat-value--success");
+      } else if (sorr.sorRiskScore <= 150) {
+        sorrScoreEl.classList.add("stat-value--warning");
+      } else {
+        sorrScoreEl.classList.add("stat-value--danger");
+      }
+    }
+    
+    // Früher Crash Impact
+    const earlyBadEl = document.getElementById("mc-sorr-early-bad");
+    if (earlyBadEl) {
+      earlyBadEl.textContent = `${sorr.earlyBadImpact.toFixed(0)}%`;
+    }
+    
+    // Früher Boom Impact
+    const earlyGoodEl = document.getElementById("mc-sorr-early-good");
+    if (earlyGoodEl) {
+      earlyGoodEl.textContent = `+${sorr.earlyGoodImpact.toFixed(0)}%`;
+    }
+    
+    // Korrelation
+    const corrEl = document.getElementById("mc-sorr-correlation");
+    if (corrEl) {
+      corrEl.textContent = `${(sorr.correlationEarlyReturns * 100).toFixed(0)}%`;
+    }
+    
+    // Worst/Best Sequence Endvermögen
+    const worstSeqEl = document.getElementById("mc-sorr-worst-seq");
+    if (worstSeqEl) {
+      worstSeqEl.textContent = formatCurrency(sorr.worstSequenceEnd);
+    }
+    
+    const bestSeqEl = document.getElementById("mc-sorr-best-seq");
+    if (bestSeqEl) {
+      bestSeqEl.textContent = formatCurrency(sorr.bestSequenceEnd);
+    }
+    
+    // Vulnerabilitätsfenster
+    const vulnEl = document.getElementById("mc-sorr-vulnerability");
+    if (vulnEl) {
+      vulnEl.textContent = `Jahr 1-${sorr.vulnerabilityWindow}`;
+    }
   }
   
   // Badge im Tab anzeigen

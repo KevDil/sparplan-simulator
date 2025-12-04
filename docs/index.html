@@ -119,6 +119,33 @@
         </section>
 
         <section class="info-section">
+          <h3>📉 Sequence-of-Returns-Risk (SoRR)</h3>
+          <p>Das <strong>Reihenfolge-Rendite-Risiko</strong> beschreibt, wie die zeitliche Abfolge von Gewinnen und Verlusten das Endergebnis beeinflusst – besonders kritisch in der Entnahmephase:</p>
+          <ul>
+            <li><strong>Kernproblem:</strong> Bei gleicher Durchschnittsrendite kann ein Crash zu Beginn der Entnahme katastrophal sein, während ein Crash am Ende kaum schadet</li>
+            <li><strong>Warum?</strong> Bei frühen Verlusten werden mehr Anteile zu niedrigen Kursen verkauft. Diese fehlen später, wenn die Kurse wieder steigen</li>
+            <li><strong>Kritisches Fenster:</strong> Die ersten 5-10 Jahre der Entnahmephase sind am sensibelsten</li>
+          </ul>
+          
+          <h4>SoRR-Kennzahlen</h4>
+          <ul>
+            <li><strong>SoRR-Spreizung:</strong> Differenz zwischen dem Endvermögen bei besten vs. schlechtesten frühen Renditen (in % des Startvermögens). Höher = größeres Sequenzrisiko</li>
+            <li><strong>Früher Crash-Effekt:</strong> Wie viel weniger Endvermögen bei schlechten frühen Renditen (20% schlechteste Sequenzen vs. Median)</li>
+            <li><strong>Früher Boom-Effekt:</strong> Wie viel mehr Endvermögen bei guten frühen Renditen (20% beste Sequenzen vs. Median)</li>
+            <li><strong>Korrelation:</strong> Statistische Korrelation zwischen frühen Renditen und Endvermögen. 100% = frühe Renditen bestimmen das Ende komplett</li>
+            <li><strong>Kritisches Fenster:</strong> In welchen Jahren die Rendite den größten Einfluss auf das Endergebnis hat</li>
+          </ul>
+          
+          <h4>Strategien gegen SoRR</h4>
+          <ul>
+            <li>Größerer Cash-Puffer (Tagesgeld-Ziel erhöhen)</li>
+            <li>Flexible Entnahmerate in schlechten Jahren</li>
+            <li>Bond-Tent: Mehr Anleihen direkt vor/nach Rentenbeginn</li>
+            <li>Teilzeitarbeit in den ersten Rentenjahren als Backup</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
           <h3>📈 Kennzahlen & Statistiken</h3>
           
           <h4>Standard-Simulation</h4>
@@ -625,6 +652,54 @@
                 <span class="stat-label">Durchschnittl. Endvermögen</span>
                 <span class="stat-value" id="mc-mean-end">-</span>
                 <small class="stat-hint">Arithmetisches Mittel</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sequence-of-Returns Risk -->
+          <div class="mc-stats-section">
+            <h4 class="mc-stats-title">
+              <svg class="mc-stats-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+              </svg>
+              Sequence-of-Returns-Risk (SoRR)
+            </h4>
+            <p class="mc-stats-desc">Zeigt, wie stark die <strong>Reihenfolge der Renditen</strong> in den ersten Jahren der Entnahmephase das Endergebnis beeinflusst.</p>
+            <div class="stats-grid stats-grid--mc">
+              <div class="stat-card stat-card--mc stat-card--sorr-main">
+                <span class="stat-label">SoRR-Spreizung</span>
+                <span class="stat-value" id="mc-sorr-score">-</span>
+                <small class="stat-hint">Unterschied beste vs. schlechteste Sequenz</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--worst">
+                <span class="stat-label">Früher Crash-Effekt</span>
+                <span class="stat-value" id="mc-sorr-early-bad">-</span>
+                <small class="stat-hint">Impact bei schlechten frühen Renditen</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--best">
+                <span class="stat-label">Früher Boom-Effekt</span>
+                <span class="stat-value" id="mc-sorr-early-good">-</span>
+                <small class="stat-hint">Impact bei guten frühen Renditen</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Korrelation frühe Rendite ↔ Ende</span>
+                <span class="stat-value" id="mc-sorr-correlation">-</span>
+                <small class="stat-hint">Wie stark bestimmen frühe Jahre das Ende</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--worst">
+                <span class="stat-label">Endvermögen (schlechte Sequenz)</span>
+                <span class="stat-value" id="mc-sorr-worst-seq">-</span>
+                <small class="stat-hint">Ø bei schlechten frühen Renditen</small>
+              </div>
+              <div class="stat-card stat-card--mc stat-card--best">
+                <span class="stat-label">Endvermögen (gute Sequenz)</span>
+                <span class="stat-value" id="mc-sorr-best-seq">-</span>
+                <small class="stat-hint">Ø bei guten frühen Renditen</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Kritisches Fenster</span>
+                <span class="stat-value" id="mc-sorr-vulnerability">-</span>
+                <small class="stat-hint">Höchste Sensitivität in diesen Jahren</small>
               </div>
             </div>
           </div>
