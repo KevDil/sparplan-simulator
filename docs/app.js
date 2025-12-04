@@ -134,6 +134,7 @@ function applyStoredValues() {
     capital_preservation_threshold: "capital_preservation_threshold",
     capital_preservation_reduction: "capital_preservation_reduction",
     capital_preservation_recovery: "capital_preservation_recovery",
+    special_savings_countdown_months: "special_savings_countdown_months",
   };
   
   // Select-Elemente (Dropdowns)
@@ -154,6 +155,7 @@ function applyStoredValues() {
     { id: "inflation_adjust_special_withdrawal", key: "inflation_adjust_special_withdrawal" },
     { id: "capital_preservation_enabled", key: "capital_preservation_enabled" },
     { id: "use_lifo", key: "use_lifo" },
+    { id: "special_savings_countdown_enabled", key: "special_savings_countdown_enabled" },
   ];
   for (const { id, key } of checkboxes) {
     const el = document.getElementById(id);
@@ -191,6 +193,8 @@ function getDefaultValues() {
     special_savings: 15000,
     special_savings_interval: 10,
     inflation_adjust_special_savings: true,
+    special_savings_countdown_enabled: false,
+    special_savings_countdown_months: 12,
     years_withdraw: 30,
     rent_eur: 1000,
     rent_percent: 4.0,
@@ -227,6 +231,7 @@ function resetToDefaults() {
   const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
   if (eurRadio) eurRadio.checked = true;
   updateRentModeFields();
+  updateSpecialSavingsCountdownFields();
   localStorage.removeItem(STORAGE_KEY);
   messageEl.textContent = "Standardwerte wiederhergestellt.";
 }
@@ -444,6 +449,8 @@ async function exportToPdf(history, params = lastParams) {
       monthly_payout_percent: "Wunschrente (%)",
       inflation_rate_pa: "Inflation p.a.",
       sparerpauschbetrag: "Sparerpauschbetrag",
+      special_savings_countdown_enabled: "Countdown vor Sonderausgabe",
+      special_savings_countdown_months: "Countdown-Dauer (Monate)",
       capital_preservation_enabled: "Kapitalerhalt aktiv",
       capital_preservation_threshold: "Kapitalerhalt Schwelle",
       capital_preservation_reduction: "Kapitalerhalt Reduktion",
@@ -781,6 +788,8 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
         monthly_payout_percent: "Wunschrente (%)",
         inflation_rate_pa: "Inflation p.a.",
         sparerpauschbetrag: "Sparerpauschbetrag",
+        special_savings_countdown_enabled: "Countdown vor Sonderausgabe",
+        special_savings_countdown_months: "Countdown-Dauer (Monate)",
         capital_preservation_enabled: "Kapitalerhalt aktiv",
         capital_preservation_threshold: "Kapitalerhalt Schwelle",
         capital_preservation_reduction: "Kapitalerhalt Reduktion",
@@ -993,6 +1002,8 @@ function simulate(params, volatility = 0) {
     special_payout_net_savings,
     special_interval_years_savings,
     inflation_adjust_special_savings = true,
+    special_savings_countdown_enabled = false,
+    special_savings_countdown_months = 12,
     special_payout_net_withdrawal,
     special_interval_years_withdrawal,
     inflation_adjust_special_withdrawal = true,
@@ -1066,6 +1077,14 @@ function simulate(params, volatility = 0) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
     const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
     const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
+    const savingsCountdownActive = (() => {
+      if (!special_savings_countdown_enabled || special_interval_years_savings <= 0) return false;
+      const cycleMonths = special_interval_years_savings * MONTHS_PER_YEAR;
+      if (cycleMonths === 0) return false;
+      const mod = monthIdx % cycleMonths;
+      const monthsToNextSpecial = mod === 0 ? 0 : cycleMonths - mod;
+      return monthsToNextSpecial <= special_savings_countdown_months;
+    })();
     
     // Inflation kumulieren
     cumulativeInflation *= (1 + monthlyInflationRate);
@@ -1129,19 +1148,28 @@ function simulate(params, volatility = 0) {
       const currMonthlySav = monthly_savings * raiseFactor;
       const currMonthlyEtf = monthly_etf * raiseFactor;
 
-      if (savingsFull) {
-        etf_contrib = currMonthlyEtf + currMonthlySav;
+      if (savingsCountdownActive) {
+        // Countdown aktiv: komplette Sparrate ins Tagesgeld umleiten, um Sonderausgabe sicher zu parken
+        const redirected = currMonthlySav + currMonthlyEtf;
+        savings += redirected;
+        savings_contrib = redirected;
+        etf_contrib = 0;
+        savingsFull = savings >= savings_target;
       } else {
-        savings += currMonthlySav;
-        savings_contrib = currMonthlySav;
-        etf_contrib = currMonthlyEtf;
-      }
-
-      if (savings > savings_target) {
-        overflow = savings - savings_target;
-        savings = savings_target;
-        etf_contrib += overflow;
-        savingsFull = true;
+        if (savingsFull) {
+          etf_contrib = currMonthlyEtf + currMonthlySav;
+        } else {
+          savings += currMonthlySav;
+          savings_contrib = currMonthlySav;
+          etf_contrib = currMonthlyEtf;
+        }
+  
+        if (savings > savings_target) {
+          overflow = savings - savings_target;
+          savings = savings_target;
+          etf_contrib += overflow;
+          savingsFull = true;
+        }
       }
 
       if (etf_contrib > 0) {
@@ -1978,6 +2006,82 @@ function updateRentModeFields() {
   }
 }
 
+function calculateOptimalCountdownMonths() {
+  const specialSavingsBase = parseFloat(document.getElementById("special_savings")?.value?.replace(",", ".")) || 0;
+  const monthlySavingsBase = parseFloat(document.getElementById("monthly_savings")?.value?.replace(",", ".")) || 0;
+  const monthlyEtfBase = parseFloat(document.getElementById("monthly_etf")?.value?.replace(",", ".")) || 0;
+  const annualRaisePercent = parseFloat(document.getElementById("annual_raise")?.value?.replace(",", ".")) || 0;
+  const inflationRatePercent = parseFloat(document.getElementById("inflation_rate")?.value?.replace(",", ".")) || 0;
+  const specialIntervalYears = parseFloat(document.getElementById("special_savings_interval")?.value?.replace(",", ".")) || 0;
+  const inflationAdjustSpecial = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+  
+  const totalMonthlySavingsBase = monthlySavingsBase + monthlyEtfBase;
+  
+  if (specialSavingsBase <= 0 || totalMonthlySavingsBase <= 0 || specialIntervalYears <= 0) {
+    return 12; // Fallback
+  }
+  
+  const annualRaise = annualRaisePercent / 100;
+  const monthlyInflation = Math.pow(1 + inflationRatePercent / 100, 1 / 12) - 1;
+  const intervalMonths = specialIntervalYears * 12;
+  
+  // Berechne für verschiedene Zeitpunkte im Zyklus den Worst-Case
+  // (erste Sonderausgabe nach intervalMonths Monaten)
+  let maxCountdownNeeded = 0;
+  
+  // Simuliere für die erste Sonderausgabe (nach intervalMonths)
+  // und für spätere Sonderausgaben (nach 2*intervalMonths, etc.)
+  // Wir nehmen den Worst-Case aus den ersten 5 Zyklen
+  for (let cycle = 1; cycle <= 5; cycle++) {
+    const targetMonth = cycle * intervalMonths;
+    
+    // Sonderausgabe zum Zeitpunkt der Auszahlung (mit Inflation wenn aktiviert)
+    let specialAtTarget = specialSavingsBase;
+    if (inflationAdjustSpecial) {
+      specialAtTarget = specialSavingsBase * Math.pow(1 + monthlyInflation, targetMonth);
+    }
+    
+    // Rückwärts vom Zielmonat: Wie viele Monate brauchen wir?
+    let accumulated = 0;
+    let countdownMonths = 0;
+    
+    for (let m = 0; m < intervalMonths && accumulated < specialAtTarget; m++) {
+      countdownMonths++;
+      const monthIdx = targetMonth - m - 1; // 0-indexed Monat rückwärts
+      const yearIdx = Math.floor(monthIdx / 12);
+      const raiseFactor = Math.pow(1 + annualRaise, yearIdx);
+      const monthlySavingsWithRaise = (monthlySavingsBase + monthlyEtfBase) * raiseFactor;
+      accumulated += monthlySavingsWithRaise;
+    }
+    
+    // Falls immer noch nicht genug: Countdown = gesamter Intervall (Maximum)
+    if (accumulated < specialAtTarget) {
+      countdownMonths = intervalMonths;
+    }
+    
+    maxCountdownNeeded = Math.max(maxCountdownNeeded, countdownMonths);
+  }
+  
+  // Begrenze auf sinnvollen Bereich (1-240 Monate, max. Intervalllänge)
+  const optimal = Math.min(maxCountdownNeeded, intervalMonths);
+  return Math.max(1, Math.min(240, optimal));
+}
+
+function updateSpecialSavingsCountdownFields(autoCalculate = false) {
+  const enabled = document.getElementById("special_savings_countdown_enabled")?.checked ?? false;
+  const monthsEl = document.getElementById("special_savings_countdown_months");
+  if (monthsEl) {
+    monthsEl.disabled = !enabled;
+    monthsEl.closest(".field")?.classList.toggle("field--disabled", !enabled);
+    
+    // Automatische Berechnung nur beim Aktivieren der Checkbox
+    if (enabled && autoCalculate) {
+      const optimal = calculateOptimalCountdownMonths();
+      monthsEl.value = optimal;
+    }
+  }
+}
+
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   try {
@@ -2009,6 +2113,8 @@ form.addEventListener("submit", (e) => {
       special_payout_net_savings: readNumber("special_savings", { min: 0 }),
       special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
       inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+      special_savings_countdown_enabled: document.getElementById("special_savings_countdown_enabled")?.checked ?? false,
+      special_savings_countdown_months: readNumber("special_savings_countdown_months", { min: 1, max: 240 }),
       special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
       special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
       inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
@@ -2049,6 +2155,8 @@ form.addEventListener("submit", (e) => {
 form.querySelectorAll('input[name="rent_mode"]').forEach(radio => {
   radio.addEventListener("change", updateRentModeFields);
 });
+
+document.getElementById("special_savings_countdown_enabled")?.addEventListener("change", () => updateSpecialSavingsCountdownFields(true));
 
 // Reset-Button
 document.getElementById("btn-reset")?.addEventListener("click", resetToDefaults);
@@ -2208,6 +2316,7 @@ btnMcStatsReal?.addEventListener("click", () => {
 // Gespeicherte Werte laden
 applyStoredValues();
 updateRentModeFields();
+updateSpecialSavingsCountdownFields();
 
 // ============ INFO MODAL ============
 
