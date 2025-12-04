@@ -283,32 +283,41 @@ function exportMonteCarloToCsv(results, params = lastParams) {
   const summaryRows = [
     ["=== ZUSAMMENFASSUNG ===", ""],
     ["Erfolgswahrscheinlichkeit (keine Shortfalls & positives Ende)", `${results.successRate.toFixed(1)}%`],
-    ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
-    ["Pleite-Risiko (Pfad: jemals <10k oder Shortfall)", `${results.ruinProbability.toFixed(1)}%`],
+    ["Kapitalerhalt-Rate (nominal)", `${results.capitalPreservationRate.toFixed(1)}%`],
+    ["Kapitalerhalt-Rate (real/inflationsbereinigt)", `${results.capitalPreservationRateReal.toFixed(1)}%`],
+    ["Pleite-Risiko (Pfad: jemals <10k real oder Shortfall)", `${results.ruinProbability.toFixed(1)}%`],
     [],
+    ["=== ENDVERMÖGEN NOMINAL ===", ""],
     ["Endvermögen (Median)", results.medianEnd.toFixed(2)],
+    ["Endvermögen (5%-Perzentil, Worst)", results.p5End.toFixed(2)],
     ["Endvermögen (10%-Perzentil)", results.p10End.toFixed(2)],
     ["Endvermögen (90%-Perzentil)", results.p90End.toFixed(2)],
-    ["Endvermögen (5%-Perzentil, Worst)", results.p5End.toFixed(2)],
     ["Endvermögen (95%-Perzentil, Best)", results.p95End.toFixed(2)],
     ["Endvermögen (Durchschnitt)", results.meanEnd.toFixed(2)],
     [],
+    ["=== ENDVERMÖGEN REAL (inflationsbereinigt) ===", ""],
     ["Endvermögen real (Median)", results.medianEndReal.toFixed(2)],
-    ["Endvermögen real (10%-90%)", `${results.p10EndReal.toFixed(2)} - ${results.p90EndReal.toFixed(2)}`],
-    ["Vermögen bei Rentenbeginn (Median)", results.retirementMedian.toFixed(2)],
+    ["Endvermögen real (5%-Perzentil, Worst)", results.p5EndReal.toFixed(2)],
+    ["Endvermögen real (10%-Perzentil)", results.p10EndReal.toFixed(2)],
+    ["Endvermögen real (90%-Perzentil)", results.p90EndReal.toFixed(2)],
+    ["Endvermögen real (95%-Perzentil, Best)", results.p95EndReal.toFixed(2)],
+    ["Endvermögen real (Durchschnitt)", results.meanEndReal.toFixed(2)],
     [],
-    ["=== SEQUENCE-OF-RETURNS RISK ===", ""],
+    ["Vermögen bei Rentenbeginn (Median nominal)", results.retirementMedian.toFixed(2)],
+    ["Vermögen bei Rentenbeginn (Median real)", results.retirementMedianReal.toFixed(2)],
+    [],
+    ["=== SEQUENCE-OF-RETURNS RISK (Portfolio-Rendite) ===", ""],
     ["SoRR-Spreizung", `${results.sorr?.sorRiskScore?.toFixed(1) || 0}%`],
     ["Früher Crash-Effekt", `${results.sorr?.earlyBadImpact?.toFixed(1) || 0}%`],
     ["Früher Boom-Effekt", `+${results.sorr?.earlyGoodImpact?.toFixed(1) || 0}%`],
-    ["Korrelation frühe Rendite <-> Endvermögen", `${((results.sorr?.correlationEarlyReturns || 0) * 100).toFixed(1)}%`],
+    ["Korrelation frühe Portfolio-Rendite <-> Endvermögen", `${((results.sorr?.correlationEarlyReturns || 0) * 100).toFixed(1)}%`],
     ["Endvermögen (schlechte Sequenz)", (results.sorr?.worstSequenceEnd || 0).toFixed(2)],
     ["Endvermögen (gute Sequenz)", (results.sorr?.bestSequenceEnd || 0).toFixed(2)],
     ["Kritisches Fenster", `Jahr 1-${results.sorr?.vulnerabilityWindow || 5}`],
     [],
   ];
   
-  // Perzentile pro Monat
+  // Perzentile pro Monat (nominal)
   const percentileHeader = ["Monat", "Jahr", "P5", "P10", "P25", "P50 (Median)", "P75", "P90", "P95"];
   const percentileRows = results.months.map((month, idx) => [
     month,
@@ -322,12 +331,30 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     results.percentiles.p95[idx].toFixed(2),
   ]);
   
+  // Perzentile pro Monat (real/inflationsbereinigt)
+  const percentileRealHeader = ["Monat", "Jahr", "P5 real", "P10 real", "P25 real", "P50 real (Median)", "P75 real", "P90 real", "P95 real"];
+  const percentileRealRows = results.months.map((month, idx) => [
+    month,
+    Math.ceil(month / 12),
+    results.percentilesReal.p5[idx].toFixed(2),
+    results.percentilesReal.p10[idx].toFixed(2),
+    results.percentilesReal.p25[idx].toFixed(2),
+    results.percentilesReal.p50[idx].toFixed(2),
+    results.percentilesReal.p75[idx].toFixed(2),
+    results.percentilesReal.p90[idx].toFixed(2),
+    results.percentilesReal.p95[idx].toFixed(2),
+  ]);
+  
   const csvContent = [
     ...settingsRows,
     ...summaryRows,
-    ["=== PERZENTILE PRO MONAT ===", "", "", "", "", "", "", "", ""],
+    ["=== PERZENTILE PRO MONAT (nominal) ===", "", "", "", "", "", "", "", ""],
     percentileHeader,
-    ...percentileRows
+    ...percentileRows,
+    [],
+    ["=== PERZENTILE PRO MONAT (real/inflationsbereinigt) ===", "", "", "", "", "", "", "", ""],
+    percentileRealHeader,
+    ...percentileRealRows
   ].map(row => row.join(";")).join("\n");
   
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
@@ -857,7 +884,8 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     grossProceeds += sharesToSell * currentEtfPrice;
     const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
     const taxableAfterFreibetrag = Math.max(0, totalGain - Math.max(0, sparerpauschbetrag - freibetragUsed));
-    freibetragUsed += Math.min(totalGain, sparerpauschbetrag - freibetragUsed);
+    // Nur positive Gewinne verbrauchen den Freibetrag (Verluste füllen ihn nicht auf)
+    freibetragUsed += Math.max(0, Math.min(totalGain, sparerpauschbetrag - freibetragUsed));
     const partTax = taxableAfterFreibetrag * taxRate;
     const partNet = sharesToSell * currentEtfPrice - partTax;
     remaining -= partNet;
@@ -2215,6 +2243,7 @@ function simulateStochastic(params, annualVolatility) {
     cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
+    const totalPortfolioStart = savings + totalEtfValueStart; // Für Portfolio-Rendite (SoRR)
 
     if (yearIdx !== currentTaxYear) {
       currentTaxYear = yearIdx;
@@ -2459,6 +2488,16 @@ function simulateStochastic(params, annualVolatility) {
     // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
     const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
     
+    // Portfolio-Gesamtrendite (gewichtet nach ETF/Cash-Anteil am Periodenstart)
+    // Berücksichtigt beide Asset-Klassen für akkurate SoRR-Analyse
+    const savingsReturnFactor = 1 + monthlySavingsRate; // Tagesgeld-Rendite als Faktor
+    let portfolioReturn = monthlyEtfReturn; // Default: nur ETF
+    if (totalPortfolioStart > 0) {
+      const etfWeight = totalEtfValueStart / totalPortfolioStart;
+      const cashWeight = 1 - etfWeight;
+      portfolioReturn = etfWeight * monthlyEtfReturn + cashWeight * savingsReturnFactor;
+    }
+    
     history.push({
       month: monthIdx,
       year: yearIdx + 1,
@@ -2474,7 +2513,8 @@ function simulateStochastic(params, annualVolatility) {
       monthly_payout: monthlyPayout,
       monthly_payout_real: monthlyPayout / cumulativeInflation, // Für reale Statistiken
       tax_paid,
-      etfReturn: monthlyEtfReturn, // Für zeitgewichtete Rendite (TWR) in SoRR-Analyse
+      etfReturn: monthlyEtfReturn, // Nur ETF-Rendite (für Vergleich)
+      portfolioReturn, // Portfolio-Gesamtrendite inkl. Cash (für SoRR-Analyse)
       cumulative_inflation: cumulativeInflation, // Für inflationsbereinigte Schwellen
     });
   }
@@ -2563,7 +2603,7 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
   }
   
   // Berechne frühe Renditen (erste 5 Jahre der Entnahmephase) für jede Simulation
-  // Verwendet Time-Weighted Return (TWR) statt Vermögensveränderung, um Cashflows auszuschließen
+  // Verwendet Time-Weighted Return (TWR) auf PORTFOLIO-Ebene (ETF + Cash gewichtet)
   const earlyYears = Math.min(5, params.withdrawal_years);
   const earlyMonths = earlyYears * MONTHS_PER_YEAR;
   
@@ -2572,13 +2612,13 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
     const startWealth = history[savingsMonths - 1]?.total || history[savingsMonths]?.total || 0;
     
     // Zeitgewichtete Rendite (TWR) für die ersten Jahre der Entnahmephase
-    // TWR = Produkt der monatlichen Renditen (1 + r_i) - 1
-    // Da wir den multiplikativen Faktor speichern: TWR = Produkt(etfReturn_i) - 1
+    // TWR = Produkt der monatlichen Portfolio-Renditen (inkl. Cash-Anteil)
+    // Nutzt portfolioReturn statt etfReturn für akkurate Gesamtportfolio-Analyse
     let twrProduct = 1;
     const earlyEndIdx = Math.min(savingsMonths + earlyMonths - 1, numMonths - 1);
     
     for (let m = savingsMonths; m <= earlyEndIdx && m < history.length; m++) {
-      const monthlyReturn = history[m]?.etfReturn || 1;
+      const monthlyReturn = history[m]?.portfolioReturn || history[m]?.etfReturn || 1;
       twrProduct *= monthlyReturn;
     }
     
@@ -2648,10 +2688,10 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
     const yearEndIdx = Math.min(savingsMonths + year * MONTHS_PER_YEAR - 1, numMonths - 1);
     
     const yearData = allHistories.map(h => {
-      // TWR für dieses Jahr berechnen (Produkt der monatlichen Renditen)
+      // TWR für dieses Jahr berechnen (Produkt der monatlichen Portfolio-Renditen)
       let twrProduct = 1;
       for (let m = savingsMonths; m <= yearEndIdx && m < h.length; m++) {
-        const monthlyReturn = h[m]?.etfReturn || 1;
+        const monthlyReturn = h[m]?.portfolioReturn || h[m]?.etfReturn || 1;
         twrProduct *= monthlyReturn;
       }
       const yearReturn = twrProduct - 1; // TWR als Prozent
@@ -2746,7 +2786,7 @@ function analyzeMonteCarloResults(allHistories, params) {
   // Shortfall-Quote: Anteil der Simulationen mit mindestens einem Shortfall
   const shortfallRate = (totalShortfallCount / numSims) * 100;
   
-  // Kapitalerhalt: Endvermögen >= Vermögen bei Rentenbeginn (nominal, da gleicher Zeitpunkt irrelevant)
+  // Kapitalerhalt (nominal): Endvermögen >= Vermögen bei Rentenbeginn
   let capitalPreservationCount = 0;
   for (let i = 0; i < numSims; i++) {
     const retirementWealth = allHistories[i][retirementIdx]?.total || 0;
@@ -2754,6 +2794,16 @@ function analyzeMonteCarloResults(allHistories, params) {
     if (endWealth >= retirementWealth) capitalPreservationCount++;
   }
   const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
+  
+  // Kapitalerhalt (real/inflationsbereinigt): Kaufkraft erhalten
+  // Vergleicht reale Werte: Endvermögen_real >= Rentenbeginn_real
+  let capitalPreservationRealCount = 0;
+  for (let i = 0; i < numSims; i++) {
+    const retirementWealthReal = allHistories[i][retirementIdx]?.total_real || 0;
+    const endWealthReal = allHistories[i][numMonths - 1]?.total_real || 0;
+    if (endWealthReal >= retirementWealthReal) capitalPreservationRealCount++;
+  }
+  const capitalPreservationRateReal = (capitalPreservationRealCount / numSims) * 100;
   
   // Pleite-Risiko: Vermögen fällt unter 10.000 € REAL ODER Shortfall tritt auf
   // HINWEIS: Dies ist ein PFAD-Kriterium - wenn es irgendwann eintritt, zählt es.
@@ -2889,6 +2939,7 @@ function analyzeMonteCarloResults(allHistories, params) {
     // Zusätzliche Metriken
     retirementMedian,
     capitalPreservationRate,
+    capitalPreservationRateReal, // Inflationsbereinigte Kapitalerhalt-Rate
     ruinProbability,
     meanEnd,
     // Inflationsbereinigte Werte (real)
@@ -2985,10 +3036,17 @@ function renderMonteCarloStats(results) {
     realReturnPaEl.textContent = `${nf2.format(results.realReturnPa)} %`;
   }
   
-  // Duplizierte Risikokennzahlen für Real-Ansicht
+  // Risikokennzahlen für Real-Ansicht (inflationsbereinigt)
   const capitalPreservationRealEl = document.getElementById("mc-capital-preservation-real");
   if (capitalPreservationRealEl) {
-    capitalPreservationRealEl.textContent = `${results.capitalPreservationRate.toFixed(1)}%`;
+    // Zeigt echte inflationsbereinigte Kapitalerhalt-Rate
+    capitalPreservationRealEl.textContent = `${results.capitalPreservationRateReal.toFixed(1)}%`;
+    capitalPreservationRealEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+    if (results.capitalPreservationRateReal >= 50) {
+      capitalPreservationRealEl.classList.add("stat-value--success");
+    } else if (results.capitalPreservationRateReal >= 25) {
+      capitalPreservationRealEl.classList.add("stat-value--warning");
+    }
   }
   const ruinProbabilityRealEl = document.getElementById("mc-ruin-probability-real");
   if (ruinProbabilityRealEl) {
