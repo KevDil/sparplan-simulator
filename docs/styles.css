@@ -288,6 +288,68 @@ p {
   font-size: 13px;
 }
 
+/* Field Label Tooltips */
+.field-label {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.3);
+  padding-bottom: 1px;
+  display: inline-block;
+}
+
+.field-label::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 260px;
+  padding: 10px 12px;
+  background: #1e293b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: all 0.15s ease;
+  z-index: 50;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.field-label:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.field-label::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  bottom: calc(100% + 2px);
+  border: 6px solid transparent;
+  border-top-color: #1e293b;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.15s ease;
+  z-index: 51;
+}
+
+.field-label:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
+.field--checkbox .field-label {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 input[type="number"] {
   width: 100%;
   padding: 10px 12px;
