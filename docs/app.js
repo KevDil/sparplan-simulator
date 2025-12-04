@@ -3167,7 +3167,7 @@ function renderMonteCarloGraph(results) {
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   
-  if (mcUseLogScale) {
+  if (effectiveLogScale) {
     // Logarithmische Schritte
     const logMin = Math.log10(minVal);
     const logSteps = [];
