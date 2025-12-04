@@ -814,6 +814,7 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
 function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
+  let grossProceeds = 0; // Brutto-Verkaufserlös für Vorabpauschale-Tracking
   
   while (remaining > 0.01 && etfLots.length) {
     const lot = etfLots[etfLots.length - 1];
@@ -845,6 +846,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     }
 
     const sharesToSell = Math.min(sharesNeeded, lot.amount);
+    grossProceeds += sharesToSell * currentEtfPrice;
     const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
     const taxableAfterFreibetrag = Math.max(0, totalGain - Math.max(0, sparerpauschbetrag - freibetragUsed));
     freibetragUsed += Math.min(totalGain, sparerpauschbetrag - freibetragUsed);
@@ -860,7 +862,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     }
   }
   
-  return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed };
+  return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed, grossProceeds };
 }
 
 function simulate(params) {
@@ -938,6 +940,9 @@ function simulate(params) {
   // Vorabpauschale-Tracking: ETF-Wert am Jahresanfang
   let etfValueYearStart = start_etf;
   let vorabpauschaleTaxYearly = 0;
+  // Netto-Zuflüsse ins ETF-Depot dieses Jahres (Käufe - Verkaufserlöse)
+  // Für korrekte Vorabpauschale: actualGain = Endwert - Startwert - NetInflows
+  let etfNetInflowsThisYear = 0;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
@@ -955,6 +960,7 @@ function simulate(params) {
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
       vorabpauschaleTaxYearly = 0;
+      etfNetInflowsThisYear = 0;
     }
 
     // Wertentwicklung vor Cashflows
@@ -982,6 +988,7 @@ function simulate(params) {
     let tax_paid = savingsInterestTax; // Startet mit TG-Zinsen-Steuer
     let withdrawal_paid = 0;
     let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
+    let capitalPreservationActiveThisMonth = false;
 
     // ANSPARPHASE
     if (isSavingsPhase) {
@@ -1007,6 +1014,7 @@ function simulate(params) {
       if (etf_contrib > 0) {
         const newShares = etf_contrib / currentEtfPrice;
         etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
+        etfNetInflowsThisYear += etf_contrib; // Für Vorabpauschale-Berechnung
       }
 
       // Sonderausgaben Ansparphase
@@ -1035,6 +1043,7 @@ function simulate(params) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
 
         // TG unter Ziel
         if (remaining > 0.01) {
@@ -1087,7 +1096,6 @@ function simulate(params) {
       }
 
       // Kapitalerhalt-Modus: Entnahme reduzieren wenn Vermögen unter Schwelle fällt
-      let capitalPreservationActiveThisMonth = false;
       if (capital_preservation_enabled && entnahmeStartTotal > 0) {
         const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
         const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
@@ -1138,6 +1146,7 @@ function simulate(params) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -1164,8 +1173,9 @@ function simulate(params) {
       // Basisertrag = ETF-Wert am Jahresanfang × Basiszins × 0,7
       const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
       
-      // Tatsächlicher Wertzuwachs im Jahr (ohne Einzahlungen - vereinfacht)
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart);
+      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Netto-Zuflüsse
+      // (ohne Einzahlungen zu besteuern, Verkäufe wurden bereits versteuert)
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetInflowsThisYear);
       
       // Vorabpauschale = min(Basisertrag, tatsächlicher Wertzuwachs)
       // Bei negativer Wertentwicklung: keine Vorabpauschale
@@ -1985,6 +1995,8 @@ function simulateStochastic(params, annualVolatility) {
   
   // Vorabpauschale-Tracking
   let etfValueYearStart = start_etf;
+  // Netto-Zuflüsse ins ETF-Depot dieses Jahres (Käufe - Verkaufserlöse)
+  let etfNetInflowsThisYear = 0;
   
   // Kapitalerhalt-Modus Tracking
   let capitalPreservationActive = false;
@@ -2002,18 +2014,17 @@ function simulateStochastic(params, annualVolatility) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
+      etfNetInflowsThisYear = 0;
     }
 
     // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
-    // Korrektur für Volatility Drag: drift = μ - σ²/2, damit E[S_t] = S_0 * e^(μt)
-    // Bei einfacher Addition r ~ N(μ, σ) wäre der Median niedriger als erwartet
-    const volatilityDragCorrection = (monthlyVolatility * monthlyVolatility) / 2;
-    const adjustedMean = monthlyEtfMean + volatilityDragCorrection;
-    const monthlyEtfReturn = randomNormal(adjustedMean, monthlyVolatility);
-    currentEtfPrice *= (1 + monthlyEtfReturn);
-    
-    // Verhindere negative Preise
-    if (currentEtfPrice < 0.01) currentEtfPrice = 0.01;
+    // GBM: S_t = S_0 * exp((μ - σ²/2)*t + σ*W_t)
+    // Für diskreten Zeitschritt dt=1 Monat: S_t+1 = S_t * exp((μ - σ²/2) + σ*Z)
+    // wobei Z ~ N(0,1). Dies garantiert E[S_t] = S_0 * e^(μt) und verhindert negative Preise.
+    const drift = monthlyEtfMean - 0.5 * monthlyVolatility * monthlyVolatility;
+    const z = randomNormal(0, 1);
+    const monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z); // Multiplikativer Faktor
+    currentEtfPrice *= monthlyEtfReturn;
 
     const savingsInterest = savings * monthlySavingsRate;
     let savingsInterestNet = savingsInterest;
@@ -2055,6 +2066,7 @@ function simulateStochastic(params, annualVolatility) {
       if (etf_contrib > 0) {
         const newShares = etf_contrib / currentEtfPrice;
         etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
+        etfNetInflowsThisYear += etf_contrib; // Für Vorabpauschale-Berechnung
       }
 
       // Sonderausgaben Ansparphase
@@ -2081,6 +2093,7 @@ function simulateStochastic(params, annualVolatility) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -2167,6 +2180,7 @@ function simulateStochastic(params, annualVolatility) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        etfNetInflowsThisYear -= sellResult.grossProceeds; // Verkaufserlös abziehen
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -2190,7 +2204,8 @@ function simulateStochastic(params, annualVolatility) {
       const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
       
       const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart);
+      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Netto-Zuflüsse
+      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetInflowsThisYear);
       const vorabpauschale = Math.min(basisertrag, actualGain);
       
       if (vorabpauschale > 0) {
@@ -2210,6 +2225,9 @@ function simulateStochastic(params, annualVolatility) {
     const etf_value = totalEtfShares * currentEtfPrice;
     const total = savings + etf_value;
 
+    // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
+    const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
+    
     history.push({
       month: monthIdx,
       year: yearIdx + 1,
@@ -2219,8 +2237,11 @@ function simulateStochastic(params, annualVolatility) {
       total,
       total_real: total / cumulativeInflation,
       withdrawal: withdrawal_paid,
+      withdrawal_requested: withdrawal, // Für Shortfall-Analyse
+      shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt
       monthly_payout: monthlyPayout,
       tax_paid,
+      etfReturn: monthlyEtfReturn, // Für zeitgewichtete Rendite (TWR) in SoRR-Analyse
     });
   }
 
@@ -2308,6 +2329,7 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
   }
   
   // Berechne frühe Renditen (erste 5 Jahre der Entnahmephase) für jede Simulation
+  // Verwendet Time-Weighted Return (TWR) statt Vermögensveränderung, um Cashflows auszuschließen
   const earlyYears = Math.min(5, params.withdrawal_years);
   const earlyMonths = earlyYears * MONTHS_PER_YEAR;
   
@@ -2315,13 +2337,21 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
     // Vermögen am Start der Entnahme
     const startWealth = history[savingsMonths - 1]?.total || history[savingsMonths]?.total || 0;
     
-    // Vermögen nach den frühen Jahren
+    // Zeitgewichtete Rendite (TWR) für die ersten Jahre der Entnahmephase
+    // TWR = Produkt der monatlichen Renditen (1 + r_i) - 1
+    // Da wir den multiplikativen Faktor speichern: TWR = Produkt(etfReturn_i) - 1
+    let twrProduct = 1;
     const earlyEndIdx = Math.min(savingsMonths + earlyMonths - 1, numMonths - 1);
-    const earlyEndWealth = history[earlyEndIdx]?.total || 0;
     
-    // Frühe Rendite (annualisiert)
-    const earlyReturn = startWealth > 0 
-      ? Math.pow(earlyEndWealth / startWealth, 12 / earlyMonths) - 1 
+    for (let m = savingsMonths; m <= earlyEndIdx && m < history.length; m++) {
+      const monthlyReturn = history[m]?.etfReturn || 1;
+      twrProduct *= monthlyReturn;
+    }
+    
+    // Annualisierte TWR: (TWR_total)^(12/months) - 1
+    const actualMonths = earlyEndIdx - savingsMonths + 1;
+    const earlyReturn = actualMonths > 0 
+      ? Math.pow(twrProduct, 12 / actualMonths) - 1 
       : 0;
     
     // Endvermögen
@@ -2376,7 +2406,7 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
   const earlyGoodImpact = avgMiddle > 0 ? ((avgBest - avgMiddle) / avgMiddle) * 100 : 0;
   
   // Vulnerabilitätsfenster: In welchem Jahr ist die Sensitivität am höchsten?
-  // Berechne Korrelation für jedes Jahr der Entnahmephase
+  // Berechne Korrelation zwischen TWR für jedes Jahr und dem Endvermögen
   let maxCorrelationYear = 1;
   let maxCorrelation = 0;
   
@@ -2384,10 +2414,15 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
     const yearEndIdx = Math.min(savingsMonths + year * MONTHS_PER_YEAR - 1, numMonths - 1);
     
     const yearData = allHistories.map(h => {
-      const startW = h[savingsMonths - 1]?.total || h[savingsMonths]?.total || 0;
-      const yearEndW = h[yearEndIdx]?.total || 0;
+      // TWR für dieses Jahr berechnen (Produkt der monatlichen Renditen)
+      let twrProduct = 1;
+      for (let m = savingsMonths; m <= yearEndIdx && m < h.length; m++) {
+        const monthlyReturn = h[m]?.etfReturn || 1;
+        twrProduct *= monthlyReturn;
+      }
+      const yearReturn = twrProduct - 1; // TWR als Prozent
       const endW = h[numMonths - 1]?.total || 0;
-      return { yearReturn: startW > 0 ? yearEndW / startW - 1 : 0, endW };
+      return { yearReturn, endW };
     });
     
     const meanYR = yearData.reduce((s, d) => s + d.yearReturn, 0) / numSims;
@@ -2438,9 +2473,36 @@ function analyzeMonteCarloResults(allHistories, params) {
   const retirementTotals = allHistories.map(h => h[retirementIdx]?.total || 0).sort((a, b) => a - b);
   const retirementMedian = percentile(retirementTotals, 50);
   
-  // Erfolgsrate: Vermögen > 100 € am Ende
-  const successCount = finalTotals.filter(t => t > 100).length;
-  const successRate = (successCount / numSims) * 100;
+  // Erfolgsrate: Vermögen > 100 € am Ende UND keine Shortfalls während Entnahmephase
+  // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
+  let successCountStrict = 0;
+  let successCountNominal = 0;
+  let totalShortfallCount = 0; // Simulationen mit mindestens einem Shortfall
+  
+  for (const history of allHistories) {
+    const endWealth = history[history.length - 1]?.total || 0;
+    const hasPositiveEnd = endWealth > 100;
+    
+    // Prüfe auf Shortfalls in der Entnahmephase
+    let hasShortfall = false;
+    for (let m = savingsMonths; m < numMonths; m++) {
+      if ((history[m]?.shortfall || 0) > 0.01) {
+        hasShortfall = true;
+        break;
+      }
+    }
+    
+    if (hasPositiveEnd) successCountNominal++;
+    if (hasPositiveEnd && !hasShortfall) successCountStrict++;
+    if (hasShortfall) totalShortfallCount++;
+  }
+  
+  // Strenge Erfolgsrate: Keine Shortfalls UND positives Endvermögen
+  const successRate = (successCountStrict / numSims) * 100;
+  // Nominale Erfolgsrate (nur Endvermögen > 100€, wie bisher)
+  const successRateNominal = (successCountNominal / numSims) * 100;
+  // Shortfall-Quote: Anteil der Simulationen mit mindestens einem Shortfall
+  const shortfallRate = (totalShortfallCount / numSims) * 100;
   
   // Kapitalerhalt: Endvermögen >= Vermögen bei Rentenbeginn
   let capitalPreservationCount = 0;
@@ -2451,15 +2513,17 @@ function analyzeMonteCarloResults(allHistories, params) {
   }
   const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
   
-  // Pleite-Risiko: Vermögen fällt unter 10.000 € (irgendwann in der Entnahmephase)
+  // Pleite-Risiko: Vermögen fällt unter 10.000 € ODER Shortfall tritt auf
   let ruinCount = 0;
   for (const history of allHistories) {
+    let isRuin = false;
     for (let m = savingsMonths; m < numMonths; m++) {
-      if ((history[m]?.total || 0) < 10000) {
-        ruinCount++;
+      if ((history[m]?.total || 0) < 10000 || (history[m]?.shortfall || 0) > 0.01) {
+        isRuin = true;
         break;
       }
     }
+    if (isRuin) ruinCount++;
   }
   const ruinProbability = (ruinCount / numSims) * 100;
   
@@ -2488,7 +2552,9 @@ function analyzeMonteCarloResults(allHistories, params) {
   
   return {
     iterations: numSims,
-    successRate,
+    successRate, // Strenge Rate: Keine Shortfalls UND positives Endvermögen
+    successRateNominal, // Nur positives Endvermögen (alte Definition)
+    shortfallRate, // Anteil mit mindestens einem Shortfall
     finalTotals,
     finalTotalsReal,
     percentiles,
@@ -2522,7 +2588,22 @@ function analyzeMonteCarloResults(allHistories, params) {
 
 function renderMonteCarloStats(results) {
   const successEl = document.getElementById("mc-success-rate");
+  // Zeige strenge Erfolgsrate (keine Shortfalls)
   successEl.textContent = `${results.successRate.toFixed(1)}%`;
+  
+  // Shortfall-Rate anzeigen (falls Element existiert)
+  const shortfallEl = document.getElementById("mc-shortfall-rate");
+  if (shortfallEl) {
+    shortfallEl.textContent = `${results.shortfallRate.toFixed(1)}%`;
+    shortfallEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+    if (results.shortfallRate <= 5) {
+      shortfallEl.classList.add("stat-value--success");
+    } else if (results.shortfallRate <= 20) {
+      shortfallEl.classList.add("stat-value--warning");
+    } else {
+      shortfallEl.classList.add("stat-value--danger");
+    }
+  }
   
   // Nominale Werte
   document.getElementById("mc-median-end").textContent = formatCurrency(results.medianEnd);
