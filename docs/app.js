@@ -89,10 +89,17 @@ function applyStoredValues() {
     inflation_rate_pa: "inflation_rate",
   };
   
-  // Checkbox separat behandeln
-  const inflationCheckbox = document.getElementById("inflation_adjust_withdrawal");
-  if (inflationCheckbox && stored.inflation_adjust_withdrawal != null) {
-    inflationCheckbox.checked = stored.inflation_adjust_withdrawal;
+  // Checkboxen separat behandeln
+  const checkboxes = [
+    { id: "inflation_adjust_withdrawal", key: "inflation_adjust_withdrawal" },
+    { id: "inflation_adjust_special_savings", key: "inflation_adjust_special_savings" },
+    { id: "inflation_adjust_special_withdrawal", key: "inflation_adjust_special_withdrawal" },
+  ];
+  for (const { id, key } of checkboxes) {
+    const el = document.getElementById(id);
+    if (el && stored[key] != null) {
+      el.checked = stored[key];
+    }
   }
   
   for (const [paramKey, inputId] of Object.entries(fieldMap)) {
@@ -122,6 +129,7 @@ function getDefaultValues() {
     annual_raise: 3.0,
     special_savings: 15000,
     special_savings_interval: 10,
+    inflation_adjust_special_savings: true,
     years_withdraw: 30,
     rent_eur: 1000,
     rent_percent: 4.0,
@@ -130,6 +138,7 @@ function getDefaultValues() {
     inflation_adjust_withdrawal: true,
     special_withdraw: 15000,
     special_withdraw_interval: 10,
+    inflation_adjust_special_withdrawal: true,
     inflation_rate: 2.0,
   };
 }
@@ -272,8 +281,10 @@ function simulate(params) {
     inflation_adjust_withdrawal = true,
     special_payout_net_savings,
     special_interval_years_savings,
+    inflation_adjust_special_savings = true,
     special_payout_net_withdrawal,
     special_interval_years_withdrawal,
+    inflation_adjust_special_withdrawal = true,
     inflation_rate_pa = 0,
     sparerpauschbetrag = SPARERPAUSCHBETRAG,
   } = params;
@@ -368,7 +379,12 @@ function simulate(params) {
         && monthIdx > 0;
 
       if (inSpecial) {
-        let remaining = special_payout_net_savings;
+        // Inflationsanpassung der Sonderausgabe
+        let specialAmount = special_payout_net_savings;
+        if (inflation_adjust_special_savings) {
+          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+        }
+        let remaining = specialAmount;
         withdrawal = remaining;
 
         const extraCash = Math.max(0, savings - savings_target);
@@ -438,7 +454,12 @@ function simulate(params) {
       let needed_net = currentPayout;
       if (special_interval_years_withdrawal > 0
         && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
-        needed_net += special_payout_net_withdrawal;
+        // Inflationsanpassung der Sonderausgabe
+        let specialAmount = special_payout_net_withdrawal;
+        if (inflation_adjust_special_withdrawal) {
+          specialAmount = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+        }
+        needed_net += specialAmount;
       }
 
       if (needed_net > 0) {
@@ -809,6 +830,8 @@ form.addEventListener("submit", (e) => {
     messageEl.textContent = "";
     const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
     const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+    const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+    const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
     
     // Validierte Parameter mit Grenzen
     const params = {
@@ -830,8 +853,10 @@ form.addEventListener("submit", (e) => {
       inflation_adjust_withdrawal: inflationAdjust,
       special_payout_net_savings: readNumber("special_savings", { min: 0 }),
       special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+      inflation_adjust_special_savings: inflationAdjustSpecialSavings,
       special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
       special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+      inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
       rent_mode: mode,
     };
