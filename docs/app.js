@@ -41,6 +41,7 @@ let lastHistory = [];
 let lastParams = null;
 let includeSpecialWithdrawals = false; // Toggle: Sonderausgaben in Statistik einbeziehen
 let stdUseLogScale = false; // Standard: lineare Skala für Standard-Chart
+let showRealStats = false; // Toggle: Nominale vs. inflationsbereinigte Statistiken
 
 // ============ UTILITY FUNCTIONS ============
 
@@ -1313,23 +1314,34 @@ function renderStats(history, params) {
   const lastRow = history[history.length - 1];
   const ansparRows = history.filter(r => r.phase === "Anspar");
   const entnahmeRows = history.filter(r => r.phase === "Entnahme");
+  
+  // Vermögen bei Rentenbeginn berechnen
+  const entnahmeStartIdx = ansparRows.length;
+  const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
+  const retirementWealth = entnahmeStartRow.total;
+  const retirementWealthReal = entnahmeStartRow.total_real || retirementWealth;
 
+  // === NOMINALE WERTE ===
+  
   // Endvermögen
   document.getElementById("stat-end-nominal").textContent = formatCurrency(lastRow.total);
-  document.getElementById("stat-end-real").textContent = formatCurrency(lastRow.total_real || lastRow.total);
+  
+  // Vermögen bei Rentenbeginn (nominal)
+  const retirementNominalEl = document.getElementById("stat-retirement-wealth-nominal");
+  if (retirementNominalEl) {
+    retirementNominalEl.textContent = formatCurrency(retirementWealth);
+  }
 
   // Eingezahlt gesamt (Start + alle Beiträge)
   const totalInvested = (params.start_savings || 0) + (params.start_etf || 0) +
     ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
   document.getElementById("stat-total-invested").textContent = formatCurrency(totalInvested);
 
-  // Rendite gesamt
+  // Rendite gesamt (nominal)
   const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
   document.getElementById("stat-total-return").textContent = formatCurrency(totalReturn);
 
   // Entnahme-Statistiken (Toggle: mit/ohne Sonderausgaben)
-  // Mit Sonderausgaben: withdrawal (Gesamtentnahme inkl. Sonder)
-  // Ohne Sonderausgaben: monthly_payout (nur regul\u00e4re monatliche Entnahme)
   const useWithdrawals = includeSpecialWithdrawals;
   
   const displayValues = entnahmeRows
@@ -1350,29 +1362,25 @@ function renderStats(history, params) {
     }
   }
   
+  // Entnahmen gesamt (nominal)
+  const totalWithdrawals = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
+  const totalWithdrawalsEl = document.getElementById("stat-total-withdrawals");
+  if (totalWithdrawalsEl) {
+    totalWithdrawalsEl.textContent = formatCurrency(totalWithdrawals);
+  }
+  
   if (displayValues.length > 0) {
     const avgWithdrawal = displayValues.reduce((a, b) => a + b, 0) / displayValues.length;
     document.getElementById("stat-avg-withdrawal").textContent = formatCurrency(avgWithdrawal);
     
-    // Reale Kaufkraft der Entnahmen (Durchschnitt)
-    const avgWithdrawalReal = displayValuesReal.reduce((a, b) => a + b, 0) / displayValuesReal.length;
-    document.getElementById("stat-avg-withdrawal-real").textContent = formatCurrency(avgWithdrawalReal);
-    
-    // Min/Max
+    // Min/Max (nominal)
     const minVal = Math.min(...displayValues);
     const maxVal = Math.max(...displayValues);
     document.getElementById("stat-minmax-withdrawal").textContent = 
       `${formatCurrency(minVal)} / ${formatCurrency(maxVal)}`;
-    
-    const minValReal = Math.min(...displayValuesReal);
-    const maxValReal = Math.max(...displayValuesReal);
-    document.getElementById("stat-minmax-withdrawal-real").textContent = 
-      `${formatCurrency(minValReal)} / ${formatCurrency(maxValReal)}`;
   } else {
     document.getElementById("stat-avg-withdrawal").textContent = "-";
     document.getElementById("stat-minmax-withdrawal").textContent = "-";
-    document.getElementById("stat-avg-withdrawal-real").textContent = "-";
-    document.getElementById("stat-minmax-withdrawal-real").textContent = "-";
   }
 
   // Steuern gesamt
@@ -1384,12 +1392,10 @@ function renderStats(history, params) {
   document.getElementById("stat-vorabpauschale").textContent = formatCurrency(totalVorabpauschale);
 
   // Effektive Entnahmerate (bezogen auf Startvermögen Entnahmephase)
+  let effectiveRate = 0;
   if (entnahmeRows.length > 0 && displayValues.length > 0) {
-    const entnahmeStartIdx = ansparRows.length;
-    const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
-    const startCapital = entnahmeStartRow.total;
     const avgAnnualWithdrawal = (displayValues.reduce((a, b) => a + b, 0) / displayValues.length) * 12;
-    const effectiveRate = startCapital > 0 ? (avgAnnualWithdrawal / startCapital * 100) : 0;
+    effectiveRate = retirementWealth > 0 ? (avgAnnualWithdrawal / retirementWealth * 100) : 0;
     document.getElementById("stat-effective-rate").textContent = `${nf2.format(effectiveRate)} % p.a.`;
   } else {
     document.getElementById("stat-effective-rate").textContent = "-";
@@ -1421,18 +1427,99 @@ function renderStats(history, params) {
     }
   }
 
+  // === INFLATIONSBEREINIGTE WERTE ===
+  
+  // Endvermögen (real)
+  document.getElementById("stat-end-real").textContent = formatCurrency(lastRow.total_real || lastRow.total);
+  
+  // Vermögen bei Rentenbeginn (real)
+  const retirementRealEl = document.getElementById("stat-retirement-wealth-real");
+  if (retirementRealEl) {
+    retirementRealEl.textContent = formatCurrency(retirementWealthReal);
+  }
+  
+  // Eingezahlt gesamt (auch in der Real-Ansicht nominal anzeigen)
+  const totalInvestedRealEl = document.getElementById("stat-total-invested-real");
+  if (totalInvestedRealEl) {
+    totalInvestedRealEl.textContent = formatCurrency(totalInvested);
+  }
+  
+  // Rendite gesamt (real) - Endvermögen real minus Eingezahlt
+  const totalReturnReal = (lastRow.total_real || lastRow.total) - totalInvested;
+  const totalReturnRealEl = document.getElementById("stat-total-return-real");
+  if (totalReturnRealEl) {
+    totalReturnRealEl.textContent = formatCurrency(totalReturnReal);
+  }
+  
+  // Entnahmen gesamt (real)
+  const totalWithdrawalsReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_real || r.withdrawal || 0), 0);
+  const totalWithdrawalsRealEl = document.getElementById("stat-total-withdrawals-real");
+  if (totalWithdrawalsRealEl) {
+    totalWithdrawalsRealEl.textContent = formatCurrency(totalWithdrawalsReal);
+  }
+  
+  if (displayValuesReal.length > 0) {
+    // Durchschnittliche Entnahme (real)
+    const avgWithdrawalReal = displayValuesReal.reduce((a, b) => a + b, 0) / displayValuesReal.length;
+    document.getElementById("stat-avg-withdrawal-real").textContent = formatCurrency(avgWithdrawalReal);
+    
+    // Min/Max (real)
+    const minValReal = Math.min(...displayValuesReal);
+    const maxValReal = Math.max(...displayValuesReal);
+    document.getElementById("stat-minmax-withdrawal-real").textContent = 
+      `${formatCurrency(minValReal)} / ${formatCurrency(maxValReal)}`;
+  } else {
+    document.getElementById("stat-avg-withdrawal-real").textContent = "-";
+    document.getElementById("stat-minmax-withdrawal-real").textContent = "-";
+  }
+  
+  // Kaufkraftverlust durch Inflation
+  const inflationFactor = lastRow.cumulative_inflation || 1;
+  const purchasingPowerLoss = (1 - 1 / inflationFactor) * 100;
+  const purchasingPowerLossEl = document.getElementById("stat-purchasing-power-loss");
+  if (purchasingPowerLossEl) {
+    purchasingPowerLossEl.textContent = `${nf2.format(purchasingPowerLoss)} %`;
+  }
+  
+  // Reale Rendite p.a. (nach Inflation)
+  // Bessere Berechnung: Nominale Rendite minus Inflation
+  const nominalReturnPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
+  const inflationRatePa = params.inflation_rate_pa || 2;
+  // Fisher-Gleichung: (1 + real) = (1 + nominal) / (1 + inflation)
+  let realReturnPa = ((1 + nominalReturnPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
+  
+  // Bei Totalverlust (Vermögen aufgebraucht) spezielle Anzeige
+  const endValueReal = lastRow.total_real || lastRow.total;
+  const realReturnPaEl = document.getElementById("stat-real-return-pa");
+  if (realReturnPaEl) {
+    if (endValueReal < 1) {
+      realReturnPaEl.textContent = "Vermögen aufgebraucht";
+    } else {
+      realReturnPaEl.textContent = `${nf2.format(realReturnPa)} %`;
+    }
+  }
+  
+  // Effektive Entnahmerate (real)
+  const effectiveRateRealEl = document.getElementById("stat-effective-rate-real");
+  if (effectiveRateRealEl) {
+    if (entnahmeRows.length > 0 && displayValuesReal.length > 0) {
+      const avgAnnualWithdrawalReal = (displayValuesReal.reduce((a, b) => a + b, 0) / displayValuesReal.length) * 12;
+      const effectiveRateReal = retirementWealthReal > 0 ? (avgAnnualWithdrawalReal / retirementWealthReal * 100) : 0;
+      effectiveRateRealEl.textContent = `${nf2.format(effectiveRateReal)} % p.a.`;
+    } else {
+      effectiveRateRealEl.textContent = "-";
+    }
+  }
+
   // Warnung bei Vermögensaufbrauch
   const warningEl = document.getElementById("stat-warning");
   if (warningEl) {
-    // Pr\u00fcfe ob Verm\u00f6gen in der Entnahmephase stark gesunken oder aufgebraucht wurde
     if (entnahmeRows.length > 0) {
-      const entnahmeStartIdx = ansparRows.length;
-      const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
-      const startCapital = entnahmeStartRow.total;
+      const startCapital = retirementWealth;
       const endCapital = lastRow.total;
       const capitalRatio = startCapital > 0 ? endCapital / startCapital : 1;
       
-      // Pr\u00fcfe ob Entnahmen nicht vollst\u00e4ndig bedient werden konnten
+      // Prüfe ob Entnahmen nicht vollständig bedient werden konnten
       const shortfallMonths = entnahmeRows.filter(r => {
         const requested = r.monthly_payout || 0;
         const paid = r.withdrawal || 0;
@@ -1440,19 +1527,19 @@ function renderStats(history, params) {
       }).length;
       
       if (endCapital < 100) {
-        warningEl.textContent = "\u26a0\ufe0f Verm\u00f6gen vollst\u00e4ndig aufgebraucht! Entnahmen k\u00f6nnen nicht gedeckt werden.";
+        warningEl.textContent = "\u26a0\ufe0f Vermögen vollständig aufgebraucht! Entnahmen können nicht gedeckt werden.";
         warningEl.className = "stat-warning stat-warning--critical";
       } else if (capitalRatio < 0.1) {
-        warningEl.textContent = "\u26a0\ufe0f Verm\u00f6gen fast aufgebraucht (< 10% des Startverm\u00f6gens). Entnahmerate pr\u00fcfen!";
+        warningEl.textContent = "\u26a0\ufe0f Vermögen fast aufgebraucht (< 10% des Startvermögens). Entnahmerate prüfen!";
         warningEl.className = "stat-warning stat-warning--critical";
       } else if (capitalRatio < 0.3) {
-        warningEl.textContent = "\u26a0 Verm\u00f6gen stark reduziert (< 30% des Startverm\u00f6gens). Evtl. Entnahme anpassen.";
+        warningEl.textContent = "\u26a0 Vermögen stark reduziert (< 30% des Startvermögens). Evtl. Entnahme anpassen.";
         warningEl.className = "stat-warning stat-warning--warning";
       } else if (shortfallMonths > 0) {
-        warningEl.textContent = `\u26a0 In ${shortfallMonths} Monaten konnte die gew\u00fcnschte Entnahme nicht vollst\u00e4ndig bedient werden.`;
+        warningEl.textContent = `\u26a0 In ${shortfallMonths} Monaten konnte die gewünschte Entnahme nicht vollständig bedient werden.`;
         warningEl.className = "stat-warning stat-warning--warning";
       } else {
-        warningEl.textContent = "\u2705 Verm\u00f6gen reicht f\u00fcr den gew\u00e4hlten Entnahmezeitraum.";
+        warningEl.textContent = "\u2705 Vermögen reicht für den gewählten Entnahmezeitraum.";
         warningEl.className = "stat-warning stat-warning--ok";
       }
     } else {
@@ -1834,9 +1921,74 @@ function toggleWithdrawalStats() {
   }
 }
 
-// Event-Listener f\u00fcr klickbare Stat-Karten
+// Event-Listener für klickbare Stat-Karten
 ["stat-card-avg-nominal", "stat-card-avg-real", "stat-card-minmax-nominal", "stat-card-minmax-real"].forEach(id => {
   document.getElementById(id)?.addEventListener("click", toggleWithdrawalStats);
+});
+
+// Toggle für Nominal/Real Statistiken
+const btnStatsNominal = document.getElementById("btn-stats-nominal");
+const btnStatsReal = document.getElementById("btn-stats-real");
+const statsSectionNominal = document.getElementById("stats-section-nominal");
+const statsSectionReal = document.getElementById("stats-section-real");
+
+function updateStatsView() {
+  if (showRealStats) {
+    statsSectionNominal?.classList.add("stats-section--hidden");
+    statsSectionReal?.classList.remove("stats-section--hidden");
+    btnStatsNominal?.classList.remove("stats-toggle-btn--active");
+    btnStatsReal?.classList.add("stats-toggle-btn--active");
+  } else {
+    statsSectionNominal?.classList.remove("stats-section--hidden");
+    statsSectionReal?.classList.add("stats-section--hidden");
+    btnStatsNominal?.classList.add("stats-toggle-btn--active");
+    btnStatsReal?.classList.remove("stats-toggle-btn--active");
+  }
+}
+
+btnStatsNominal?.addEventListener("click", () => {
+  if (!showRealStats) return;
+  showRealStats = false;
+  updateStatsView();
+});
+
+btnStatsReal?.addEventListener("click", () => {
+  if (showRealStats) return;
+  showRealStats = true;
+  updateStatsView();
+});
+
+// Toggle für Monte-Carlo Nominal/Real Statistiken
+let showMcRealStats = false;
+const btnMcStatsNominal = document.getElementById("btn-mc-stats-nominal");
+const btnMcStatsReal = document.getElementById("btn-mc-stats-real");
+const mcStatsSectionNominal = document.getElementById("mc-stats-section-nominal");
+const mcStatsSectionReal = document.getElementById("mc-stats-section-real");
+
+function updateMcStatsView() {
+  if (showMcRealStats) {
+    mcStatsSectionNominal?.classList.add("stats-section--hidden");
+    mcStatsSectionReal?.classList.remove("stats-section--hidden");
+    btnMcStatsNominal?.classList.remove("stats-toggle-btn--active");
+    btnMcStatsReal?.classList.add("stats-toggle-btn--active");
+  } else {
+    mcStatsSectionNominal?.classList.remove("stats-section--hidden");
+    mcStatsSectionReal?.classList.add("stats-section--hidden");
+    btnMcStatsNominal?.classList.add("stats-toggle-btn--active");
+    btnMcStatsReal?.classList.remove("stats-toggle-btn--active");
+  }
+}
+
+btnMcStatsNominal?.addEventListener("click", () => {
+  if (!showMcRealStats) return;
+  showMcRealStats = false;
+  updateMcStatsView();
+});
+
+btnMcStatsReal?.addEventListener("click", () => {
+  if (showMcRealStats) return;
+  showMcRealStats = true;
+  updateMcStatsView();
 });
 
 // Gespeicherte Werte laden
@@ -2548,6 +2700,47 @@ function analyzeMonteCarloResults(allHistories, params) {
   // Durchschnittliches Endvermögen
   const meanEnd = finalTotals.reduce((a, b) => a + b, 0) / numSims;
   
+  // Durchschnittliche monatliche Rente und Gesamtentnahmen berechnen
+  const avgMonthlyWithdrawals = [];
+  const avgMonthlyWithdrawalsReal = [];
+  const totalWithdrawals = [];
+  const totalWithdrawalsReal = [];
+  
+  for (const history of allHistories) {
+    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && r.monthly_payout > 0);
+    if (entnahmeRows.length > 0) {
+      const avgWithdrawal = entnahmeRows.reduce((sum, r) => sum + (r.monthly_payout || 0), 0) / entnahmeRows.length;
+      const avgWithdrawalReal = entnahmeRows.reduce((sum, r) => sum + (r.monthly_payout_real || r.monthly_payout || 0), 0) / entnahmeRows.length;
+      avgMonthlyWithdrawals.push(avgWithdrawal);
+      avgMonthlyWithdrawalsReal.push(avgWithdrawalReal);
+      
+      const totalW = history.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
+      const totalWReal = history.reduce((sum, r) => sum + (r.withdrawal_real || r.withdrawal || 0), 0);
+      totalWithdrawals.push(totalW);
+      totalWithdrawalsReal.push(totalWReal);
+    }
+  }
+  
+  avgMonthlyWithdrawals.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsReal.sort((a, b) => a - b);
+  totalWithdrawals.sort((a, b) => a - b);
+  totalWithdrawalsReal.sort((a, b) => a - b);
+  
+  const medianAvgMonthlyWithdrawal = avgMonthlyWithdrawals.length > 0 ? percentile(avgMonthlyWithdrawals, 50) : 0;
+  const medianAvgMonthlyWithdrawalReal = avgMonthlyWithdrawalsReal.length > 0 ? percentile(avgMonthlyWithdrawalsReal, 50) : 0;
+  const medianTotalWithdrawals = totalWithdrawals.length > 0 ? percentile(totalWithdrawals, 50) : 0;
+  const medianTotalWithdrawalsReal = totalWithdrawalsReal.length > 0 ? percentile(totalWithdrawalsReal, 50) : 0;
+  
+  // Kaufkraftverlust berechnen (basierend auf Inflationsrate und Gesamtlaufzeit)
+  const totalMonths = numMonths;
+  const inflationRatePa = params.inflation_rate_pa || 2;
+  const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, totalMonths / MONTHS_PER_YEAR);
+  const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
+  
+  // Reale Rendite p.a. (Fisher-Gleichung)
+  const nominalReturnPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
+  const realReturnPa = ((1 + nominalReturnPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
+  
   // Perzentile pro Monat berechnen
   const percentiles = {
     p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
@@ -2599,6 +2792,13 @@ function analyzeMonteCarloResults(allHistories, params) {
       allHistories.map(h => h[retirementIdx]?.total_real || 0).sort((a, b) => a - b), 
       50
     ),
+    // Entnahme-Statistiken
+    medianAvgMonthlyWithdrawal,
+    medianAvgMonthlyWithdrawalReal,
+    medianTotalWithdrawals,
+    medianTotalWithdrawalsReal,
+    purchasingPowerLoss,
+    realReturnPa,
     // Sequence-of-Returns Risk
     sorr,
   };
@@ -2638,12 +2838,52 @@ function renderMonteCarloStats(results) {
   document.getElementById("mc-worst-case-real").textContent = formatCurrency(results.p5EndReal);
   document.getElementById("mc-best-case-real").textContent = formatCurrency(results.p95EndReal);
   
-  // Zusätzliche Metriken
-  document.getElementById("mc-retirement-wealth").textContent = 
-    `${formatCurrency(results.retirementMedian)} / ${formatCurrency(results.retirementMedianReal)}`;
+  // Zusätzliche Metriken - Nominale Werte
+  document.getElementById("mc-retirement-wealth").textContent = formatCurrency(results.retirementMedian);
   document.getElementById("mc-capital-preservation").textContent = `${results.capitalPreservationRate.toFixed(1)}%`;
-  document.getElementById("mc-mean-end").textContent = 
-    `${formatCurrency(results.meanEnd)} / ${formatCurrency(results.meanEndReal)}`;
+  document.getElementById("mc-mean-end").textContent = formatCurrency(results.meanEnd);
+  
+  // Entnahme-Statistiken (nominal)
+  const avgMonthlyEl = document.getElementById("mc-avg-monthly-withdrawal");
+  if (avgMonthlyEl) {
+    avgMonthlyEl.textContent = formatCurrency(results.medianAvgMonthlyWithdrawal);
+  }
+  const totalWithdrawalsEl = document.getElementById("mc-total-withdrawals");
+  if (totalWithdrawalsEl) {
+    totalWithdrawalsEl.textContent = formatCurrency(results.medianTotalWithdrawals);
+  }
+  
+  // Inflationsbereinigte Werte (real)
+  const retirementRealEl = document.getElementById("mc-retirement-wealth-real");
+  if (retirementRealEl) {
+    retirementRealEl.textContent = formatCurrency(results.retirementMedianReal);
+  }
+  const avgMonthlyRealEl = document.getElementById("mc-avg-monthly-withdrawal-real");
+  if (avgMonthlyRealEl) {
+    avgMonthlyRealEl.textContent = formatCurrency(results.medianAvgMonthlyWithdrawalReal);
+  }
+  const totalWithdrawalsRealEl = document.getElementById("mc-total-withdrawals-real");
+  if (totalWithdrawalsRealEl) {
+    totalWithdrawalsRealEl.textContent = formatCurrency(results.medianTotalWithdrawalsReal);
+  }
+  const purchasingPowerLossEl = document.getElementById("mc-purchasing-power-loss");
+  if (purchasingPowerLossEl) {
+    purchasingPowerLossEl.textContent = `${nf2.format(results.purchasingPowerLoss)} %`;
+  }
+  const realReturnPaEl = document.getElementById("mc-real-return-pa");
+  if (realReturnPaEl) {
+    realReturnPaEl.textContent = `${nf2.format(results.realReturnPa)} %`;
+  }
+  
+  // Duplizierte Risikokennzahlen für Real-Ansicht
+  const capitalPreservationRealEl = document.getElementById("mc-capital-preservation-real");
+  if (capitalPreservationRealEl) {
+    capitalPreservationRealEl.textContent = `${results.capitalPreservationRate.toFixed(1)}%`;
+  }
+  const ruinProbabilityRealEl = document.getElementById("mc-ruin-probability-real");
+  if (ruinProbabilityRealEl) {
+    ruinProbabilityRealEl.textContent = `${results.ruinProbability.toFixed(1)}%`;
+  }
   
   // Pleite-Risiko mit Farbcodierung
   const ruinEl = document.getElementById("mc-ruin-probability");

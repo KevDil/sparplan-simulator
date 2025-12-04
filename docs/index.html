@@ -519,57 +519,109 @@
             <p class="eyebrow">Zusammenfassung</p>
             <h2>Simulationsergebnisse</h2>
           </div>
+          <div class="stats-toggle">
+            <button type="button" class="stats-toggle-btn stats-toggle-btn--active" id="btn-stats-nominal">Nominal</button>
+            <button type="button" class="stats-toggle-btn" id="btn-stats-real">Inflationsbereinigt</button>
+          </div>
         </div>
         <div id="stats-panel" class="stats-panel">
-          <div class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-label">Endvermögen (nominal)</span>
-              <span class="stat-value" id="stat-end-nominal">-</span>
+          <!-- Nominale Werte -->
+          <div class="stats-section" id="stats-section-nominal">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <span class="stat-label">Endvermögen</span>
+                <span class="stat-value" id="stat-end-nominal">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                <span class="stat-value" id="stat-retirement-wealth-nominal">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Eingezahlt gesamt</span>
+                <span class="stat-value" id="stat-total-invested">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Rendite gesamt</span>
+                <span class="stat-value" id="stat-total-return">-</span>
+              </div>
+              <div class="stat-card stat-card--clickable" id="stat-card-avg-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+                <span class="stat-label">Ø Entnahme/Monat <span class="stat-toggle-hint" id="stat-toggle-hint-1">ohne Sonder</span></span>
+                <span class="stat-value" id="stat-avg-withdrawal">-</span>
+              </div>
+              <div class="stat-card stat-card--clickable" id="stat-card-minmax-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+                <span class="stat-label">Min/Max Entnahme <span class="stat-toggle-hint" id="stat-toggle-hint-2">ohne Sonder</span></span>
+                <span class="stat-value" id="stat-minmax-withdrawal">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Entnahmen gesamt</span>
+                <span class="stat-value" id="stat-total-withdrawals">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Steuern gesamt</span>
+                <span class="stat-value" id="stat-total-tax">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">davon Vorabpauschale</span>
+                <span class="stat-value" id="stat-vorabpauschale">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Effektive Entnahmerate</span>
+                <span class="stat-value" id="stat-effective-rate">-</span>
+              </div>
+              <div class="stat-card stat-card--capital-preservation" id="stat-card-capital-preservation" style="display: none;">
+                <span class="stat-label">Kapitalerhalt aktiv</span>
+                <span class="stat-value" id="stat-capital-preservation-months">-</span>
+                <small class="stat-hint" id="stat-capital-preservation-hint">Monate mit reduzierter Entnahme</small>
+              </div>
             </div>
-            <div class="stat-card">
-              <span class="stat-label">Endvermögen (real)</span>
-              <span class="stat-value" id="stat-end-real">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Eingezahlt gesamt</span>
-              <span class="stat-value" id="stat-total-invested">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Rendite gesamt</span>
-              <span class="stat-value" id="stat-total-return">-</span>
-            </div>
-            <div class="stat-card stat-card--clickable" id="stat-card-avg-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-              <span class="stat-label">Ø Entnahme/Monat (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-1">ohne Sonder</span></span>
-              <span class="stat-value" id="stat-avg-withdrawal">-</span>
-            </div>
-            <div class="stat-card stat-card--clickable" id="stat-card-avg-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-              <span class="stat-label">Ø Entnahme/Monat (real) <span class="stat-toggle-hint" id="stat-toggle-hint-2">ohne Sonder</span></span>
-              <span class="stat-value stat-value--highlight" id="stat-avg-withdrawal-real">-</span>
-            </div>
-            <div class="stat-card stat-card--clickable" id="stat-card-minmax-nominal" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-              <span class="stat-label">Min/Max Entnahme (nominal) <span class="stat-toggle-hint" id="stat-toggle-hint-3">ohne Sonder</span></span>
-              <span class="stat-value" id="stat-minmax-withdrawal">-</span>
-            </div>
-            <div class="stat-card stat-card--clickable" id="stat-card-minmax-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
-              <span class="stat-label">Min/Max Entnahme (real) <span class="stat-toggle-hint" id="stat-toggle-hint-4">ohne Sonder</span></span>
-              <span class="stat-value stat-value--highlight" id="stat-minmax-withdrawal-real">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Steuern gesamt</span>
-              <span class="stat-value" id="stat-total-tax">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">davon Vorabpauschale</span>
-              <span class="stat-value" id="stat-vorabpauschale">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Effektive Entnahmerate</span>
-              <span class="stat-value" id="stat-effective-rate">-</span>
-            </div>
-            <div class="stat-card stat-card--capital-preservation" id="stat-card-capital-preservation" style="display: none;">
-              <span class="stat-label">Kapitalerhalt aktiv</span>
-              <span class="stat-value" id="stat-capital-preservation-months">-</span>
-              <small class="stat-hint" id="stat-capital-preservation-hint">Monate mit reduzierter Entnahme</small>
+          </div>
+          
+          <!-- Inflationsbereinigte Werte -->
+          <div class="stats-section stats-section--hidden" id="stats-section-real">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <span class="stat-label">Endvermögen (Kaufkraft heute)</span>
+                <span class="stat-value stat-value--highlight" id="stat-end-real">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                <span class="stat-value stat-value--highlight" id="stat-retirement-wealth-real">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Eingezahlt gesamt</span>
+                <span class="stat-value" id="stat-total-invested-real">-</span>
+                <small class="stat-hint">Nominal, nicht inflationsbereinigt</small>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Rendite gesamt (real)</span>
+                <span class="stat-value" id="stat-total-return-real">-</span>
+              </div>
+              <div class="stat-card stat-card--clickable" id="stat-card-avg-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+                <span class="stat-label">Ø Entnahme/Monat <span class="stat-toggle-hint" id="stat-toggle-hint-3">ohne Sonder</span></span>
+                <span class="stat-value stat-value--highlight" id="stat-avg-withdrawal-real">-</span>
+              </div>
+              <div class="stat-card stat-card--clickable" id="stat-card-minmax-real" title="Klicken zum Umschalten: mit/ohne Sonderausgaben">
+                <span class="stat-label">Min/Max Entnahme <span class="stat-toggle-hint" id="stat-toggle-hint-4">ohne Sonder</span></span>
+                <span class="stat-value stat-value--highlight" id="stat-minmax-withdrawal-real">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Entnahmen gesamt (real)</span>
+                <span class="stat-value" id="stat-total-withdrawals-real">-</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Kaufkraftverlust</span>
+                <span class="stat-value" id="stat-purchasing-power-loss">-</span>
+                <small class="stat-hint">Durch Inflation über die Laufzeit</small>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Reale Rendite p.a.</span>
+                <span class="stat-value" id="stat-real-return-pa">-</span>
+                <small class="stat-hint">Nach Abzug der Inflation</small>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Effektive Entnahmerate</span>
+                <span class="stat-value" id="stat-effective-rate-real">-</span>
+              </div>
             </div>
           </div>
           <div id="stat-warning" class="stat-warning"></div>
@@ -640,90 +692,160 @@
               <p class="eyebrow">Zusammenfassung</p>
               <h2>Simulationsergebnisse</h2>
             </div>
+            <div class="stats-toggle">
+              <button type="button" class="stats-toggle-btn stats-toggle-btn--active" id="btn-mc-stats-nominal">Nominal</button>
+              <button type="button" class="stats-toggle-btn" id="btn-mc-stats-real">Inflationsbereinigt</button>
+            </div>
           </div>
           
           <!-- Nominale Werte -->
-          <div class="mc-stats-section">
-            <h4 class="mc-stats-title">Nominale Werte</h4>
-            <div class="stats-grid stats-grid--mc">
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Endvermögen (Median)</span>
-                <span class="stat-value" id="mc-median-end">-</span>
-                <small class="stat-hint">50% Perzentil</small>
+          <div class="stats-section" id="mc-stats-section-nominal">
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Endvermögen</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Median (50%)</span>
+                  <span class="stat-value" id="mc-median-end">-</span>
+                  <small class="stat-hint">Typischer Verlauf</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Spanne (10%-90%)</span>
+                  <span class="stat-value" id="mc-range-end">-</span>
+                  <small class="stat-hint">80% Konfidenzintervall</small>
+                </div>
+                <div class="stat-card stat-card--mc stat-card--worst">
+                  <span class="stat-label">Worst Case (5%)</span>
+                  <span class="stat-value" id="mc-worst-case">-</span>
+                  <small class="stat-hint">Nur 5% sind schlechter</small>
+                </div>
+                <div class="stat-card stat-card--mc stat-card--best">
+                  <span class="stat-label">Best Case (95%)</span>
+                  <span class="stat-value" id="mc-best-case">-</span>
+                  <small class="stat-hint">Nur 5% sind besser</small>
+                </div>
               </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Endvermögen (10%-90%)</span>
-                <span class="stat-value" id="mc-range-end">-</span>
-                <small class="stat-hint">80% Konfidenzintervall</small>
+            </div>
+
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Entnahmen & Rente</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Ø Monatliche Rente</span>
+                  <span class="stat-value" id="mc-avg-monthly-withdrawal">-</span>
+                  <small class="stat-hint">Median über alle Simulationen</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Entnahmen gesamt</span>
+                  <span class="stat-value" id="mc-total-withdrawals">-</span>
+                  <small class="stat-hint">Median Gesamtentnahme</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                  <span class="stat-value" id="mc-retirement-wealth">-</span>
+                  <small class="stat-hint">Median am Start der Entnahme</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Durchschnittl. Endvermögen</span>
+                  <span class="stat-value" id="mc-mean-end">-</span>
+                  <small class="stat-hint">Arithmetisches Mittel</small>
+                </div>
               </div>
-              <div class="stat-card stat-card--mc stat-card--worst">
-                <span class="stat-label">Worst Case (5%)</span>
-                <span class="stat-value" id="mc-worst-case">-</span>
-                <small class="stat-hint">Nur 5% sind schlechter</small>
-              </div>
-              <div class="stat-card stat-card--mc stat-card--best">
-                <span class="stat-label">Best Case (95%)</span>
-                <span class="stat-value" id="mc-best-case">-</span>
-                <small class="stat-hint">Nur 5% sind besser</small>
+            </div>
+
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Risikokennzahlen</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Kapitalerhalt-Wahrscheinlichkeit</span>
+                  <span class="stat-value" id="mc-capital-preservation">-</span>
+                  <small class="stat-hint">Endvermögen ≥ Startvermögen Entnahme</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Pleite-Risiko</span>
+                  <span class="stat-value" id="mc-ruin-probability">-</span>
+                  <small class="stat-hint">Jemals &lt; 10k € oder Shortfall (Pfad)</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Shortfall-Quote</span>
+                  <span class="stat-value" id="mc-shortfall-rate">-</span>
+                  <small class="stat-hint">Entnahme nicht vollständig möglich</small>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Inflationsbereinigte Werte -->
-          <div class="mc-stats-section">
-            <h4 class="mc-stats-title">Inflationsbereinigt (real)</h4>
-            <div class="stats-grid stats-grid--mc">
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Endvermögen (Median)</span>
-                <span class="stat-value stat-value--highlight" id="mc-median-end-real">-</span>
-                <small class="stat-hint">50% Perzentil in heutiger Kaufkraft</small>
-              </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Endvermögen (10%-90%)</span>
-                <span class="stat-value stat-value--highlight" id="mc-range-end-real">-</span>
-                <small class="stat-hint">80% Konfidenzintervall</small>
-              </div>
-              <div class="stat-card stat-card--mc stat-card--worst">
-                <span class="stat-label">Worst Case (5%)</span>
-                <span class="stat-value" id="mc-worst-case-real">-</span>
-                <small class="stat-hint">In heutiger Kaufkraft</small>
-              </div>
-              <div class="stat-card stat-card--mc stat-card--best">
-                <span class="stat-label">Best Case (95%)</span>
-                <span class="stat-value" id="mc-best-case-real">-</span>
-                <small class="stat-hint">In heutiger Kaufkraft</small>
+          <div class="stats-section stats-section--hidden" id="mc-stats-section-real">
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Endvermögen (Kaufkraft heute)</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Median (50%)</span>
+                  <span class="stat-value stat-value--highlight" id="mc-median-end-real">-</span>
+                  <small class="stat-hint">Typischer Verlauf in heutiger Kaufkraft</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Spanne (10%-90%)</span>
+                  <span class="stat-value stat-value--highlight" id="mc-range-end-real">-</span>
+                  <small class="stat-hint">80% Konfidenzintervall</small>
+                </div>
+                <div class="stat-card stat-card--mc stat-card--worst">
+                  <span class="stat-label">Worst Case (5%)</span>
+                  <span class="stat-value" id="mc-worst-case-real">-</span>
+                  <small class="stat-hint">In heutiger Kaufkraft</small>
+                </div>
+                <div class="stat-card stat-card--mc stat-card--best">
+                  <span class="stat-label">Best Case (95%)</span>
+                  <span class="stat-value" id="mc-best-case-real">-</span>
+                  <small class="stat-hint">In heutiger Kaufkraft</small>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- Weitere Kennzahlen -->
-          <div class="mc-stats-section">
-            <h4 class="mc-stats-title">Weitere Kennzahlen</h4>
-            <div class="stats-grid stats-grid--mc">
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Vermögen bei Rentenbeginn</span>
-                <span class="stat-value" id="mc-retirement-wealth">-</span>
-                <small class="stat-hint">Median am Start der Entnahme</small>
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Entnahmen & Rente (real)</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Ø Monatliche Rente</span>
+                  <span class="stat-value stat-value--highlight" id="mc-avg-monthly-withdrawal-real">-</span>
+                  <small class="stat-hint">Median in heutiger Kaufkraft</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Entnahmen gesamt</span>
+                  <span class="stat-value" id="mc-total-withdrawals-real">-</span>
+                  <small class="stat-hint">Median in heutiger Kaufkraft</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                  <span class="stat-value stat-value--highlight" id="mc-retirement-wealth-real">-</span>
+                  <small class="stat-hint">Median in heutiger Kaufkraft</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Kaufkraftverlust</span>
+                  <span class="stat-value" id="mc-purchasing-power-loss">-</span>
+                  <small class="stat-hint">Durch Inflation über die Laufzeit</small>
+                </div>
               </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Kapitalerhalt-Wahrscheinlichkeit</span>
-                <span class="stat-value" id="mc-capital-preservation">-</span>
-                <small class="stat-hint">Endvermögen ≥ Startvermögen Entnahme</small>
-              </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Pleite-Risiko</span>
-                <span class="stat-value" id="mc-ruin-probability">-</span>
-                <small class="stat-hint">Jemals &lt; 10k € oder Shortfall (Pfad)</small>
-              </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Shortfall-Quote</span>
-                <span class="stat-value" id="mc-shortfall-rate">-</span>
-                <small class="stat-hint">Entnahme nicht vollständig möglich</small>
-              </div>
-              <div class="stat-card stat-card--mc">
-                <span class="stat-label">Durchschnittl. Endvermögen</span>
-                <span class="stat-value" id="mc-mean-end">-</span>
-                <small class="stat-hint">Arithmetisches Mittel</small>
+            </div>
+
+            <div class="mc-stats-section">
+              <h4 class="mc-stats-title">Risikokennzahlen</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Kapitalerhalt-Wahrscheinlichkeit</span>
+                  <span class="stat-value" id="mc-capital-preservation-real">-</span>
+                  <small class="stat-hint">Endvermögen ≥ Startvermögen Entnahme</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Pleite-Risiko</span>
+                  <span class="stat-value" id="mc-ruin-probability-real">-</span>
+                  <small class="stat-hint">Jemals &lt; 10k € oder Shortfall (Pfad)</small>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Reale Rendite p.a.</span>
+                  <span class="stat-value" id="mc-real-return-pa">-</span>
+                  <small class="stat-hint">Nach Abzug der Inflation</small>
+                </div>
               </div>
             </div>
           </div>
