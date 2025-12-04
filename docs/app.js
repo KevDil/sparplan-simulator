@@ -136,14 +136,26 @@ function resetToDefaults() {
 
 // ============ CSV EXPORT ============
 
-function exportToCsv(history) {
+function exportToCsv(history, params = lastParams) {
   if (!history.length) {
     messageEl.textContent = "Keine Daten zum Exportieren.";
     return;
   }
+  if (!params) {
+    messageEl.textContent = "Bitte zuerst eine Simulation ausführen, damit Eingaben exportiert werden.";
+    return;
+  }
   
-  const headers = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern"];
-  const rows = history.map(r => [
+  const settingsHeader = ["Einstellung", "Wert"];
+  const settingsRows = [
+    settingsHeader,
+    ["Exportzeitpunkt", new Date().toISOString()],
+    ...Object.entries(params).map(([key, val]) => [key, val ?? ""]),
+    [],
+  ];
+
+  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern"];
+  const dataRows = history.map(r => [
     r.year,
     r.month,
     r.phase,
@@ -156,7 +168,7 @@ function exportToCsv(history) {
     (r.tax_paid || 0).toFixed(2),
   ]);
   
-  const csvContent = [headers, ...rows].map(row => row.join(";")).join("\n");
+  const csvContent = [...settingsRows, dataHeader, ...dataRows].map(row => row.join(";")).join("\n");
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -164,7 +176,7 @@ function exportToCsv(history) {
   a.download = `etf_simulation_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-  messageEl.textContent = "CSV exportiert.";
+  messageEl.textContent = "CSV exportiert (inkl. Einstellungen).";
 }
 
 // ============ ETF SELLING (EXTRACTED) ============
@@ -717,7 +729,6 @@ window.addEventListener("resize", () => {
   if (lastHistory.length) renderGraph(lastHistory);
 });
 
-// Gespeicherte Werte laden und Simulation starten
+// Gespeicherte Werte laden
 applyStoredValues();
 updateRentModeFields();
-form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
