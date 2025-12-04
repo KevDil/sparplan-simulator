@@ -134,7 +134,7 @@ function applyStoredValues() {
     { id: "inflation_adjust_special_savings", key: "inflation_adjust_special_savings" },
     { id: "inflation_adjust_special_withdrawal", key: "inflation_adjust_special_withdrawal" },
     { id: "capital_preservation_enabled", key: "capital_preservation_enabled" },
-    { id: "use_fifo", key: "use_fifo" },
+    { id: "use_lifo", key: "use_lifo" },
   ];
   for (const { id, key } of checkboxes) {
     const el = document.getElementById(id);
@@ -184,7 +184,7 @@ function getDefaultValues() {
     sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer: "keine",
     basiszins: 2.53,
-    use_fifo: true,
+    use_lifo: false,
     capital_preservation_enabled: false,
     capital_preservation_threshold: 80,
     capital_preservation_reduction: 25,
@@ -905,7 +905,7 @@ function simulate(params) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
-    use_fifo = true,
+    use_lifo = false,
     capital_preservation_enabled = false,
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
@@ -1052,7 +1052,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1155,7 +1155,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1721,7 +1721,7 @@ form.addEventListener("submit", (e) => {
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
-      use_fifo: document.getElementById("use_fifo")?.checked ?? true,
+      use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
       capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
@@ -1971,7 +1971,7 @@ function simulateStochastic(params, annualVolatility) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
-    use_fifo = true,
+    use_lifo = false,
     capital_preservation_enabled = false,
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
@@ -2104,7 +2104,7 @@ function simulateStochastic(params, annualVolatility) {
           remaining -= use;
         }
 
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -2191,7 +2191,7 @@ function simulateStochastic(params, annualVolatility) {
           remaining -= use;
         }
 
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
