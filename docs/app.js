@@ -951,8 +951,9 @@ function simulate(params) {
   let capitalPreservationActive = false;
   let capitalPreservationMonths = 0;
   
-  // Vorabpauschale-Tracking: ETF-Wert am Jahresanfang
+  // Vorabpauschale-Tracking: ETF-Wert und Preis am Jahresanfang
   let etfValueYearStart = start_etf;
+  let etfPriceAtYearStart = currentEtfPrice;
   let vorabpauschaleTaxYearly = 0;
   // Nur Käufe (positive Zuflüsse) für Vorabpauschale-Berechnung
   // WICHTIG: Verkäufe werden NICHT abgezogen, da Verkaufsgewinne bereits versteuert wurden
@@ -968,11 +969,12 @@ function simulate(params) {
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
 
-    // Neues Steuerjahr -> Freibetrag zurücksetzen und ETF-Wert am Jahresanfang speichern
+    // Neues Steuerjahr -> Freibetrag zurücksetzen und ETF-Wert/Preis am Jahresanfang speichern
     if (yearIdx !== currentTaxYear) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
+      etfPriceAtYearStart = currentEtfPrice;
       vorabpauschaleTaxYearly = 0;
       etfNetPurchasesThisYear = 0;
     }
@@ -1180,27 +1182,53 @@ function simulate(params) {
 
     // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
     // Für thesaurierende ETFs wird die Vorabpauschale am Jahresende berechnet
+    // KORRIGIERT: Lot-basierte Berechnung mit Zeitanteilen und Cost-Basis-Erhöhung
     let vorabpauschaleTax = 0;
-    if (monthInYear === 12 && basiszins > 0 && etfValueYearStart > 0) {
-      const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
-      const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
+    let totalVorabpauschale = 0;
+    if (monthInYear === 12 && basiszins > 0) {
+      const yearStartMonth = yearIdx * MONTHS_PER_YEAR; // Monat 0, 12, 24, ...
       
-      // Basisertrag = ETF-Wert am Jahresanfang × Basiszins × 0,7
-      const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
+      // Pro-Lot-Berechnung der Vorabpauschale
+      for (const lot of etfLots) {
+        if (lot.amount <= 0) continue;
+        
+        const boughtThisYear = lot.monthIdx > yearStartMonth;
+        
+        // Basisertrag-Grundlage: Wert am Jahresanfang (alte Lots) oder Kaufwert (neue Lots)
+        const basisertragBase = boughtThisYear 
+          ? lot.amount * lot.price  // Neue Lots: Kaufwert
+          : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
+        
+        // Zeitanteil: Für neue Lots nur anteilig (Kaufmonat bis Dezember) / 12
+        let zeitanteil = 1;
+        if (boughtThisYear) {
+          const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
+          zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
+        }
+        
+        // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
+        const lotBasisertrag = basisertragBase * (basiszins / 100) * 0.7 * zeitanteil;
+        
+        // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
+        const lotValueYearEnd = lot.amount * currentEtfPrice;
+        const lotValueStart = boughtThisYear 
+          ? lot.amount * lot.price  // Neue Lots: Kaufwert
+          : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
+        const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
+        
+        // Vorabpauschale = min(Basisertrag, Wertzuwachs)
+        const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
+        
+        if (lotVorabpauschale > 0) {
+          totalVorabpauschale += lotVorabpauschale;
+          // Cost-Basis erhöhen (verhindert Doppelbesteuerung bei späterem Verkauf)
+          lot.price += lotVorabpauschale / lot.amount;
+        }
+      }
       
-      // Tatsächlicher Wertzuwachs = Endwert - Startwert - Käufe
-      // WICHTIG: Nur Käufe abziehen, nicht Verkäufe! Verkaufsgewinne wurden bereits
-      // beim Verkauf versteuert und dürfen nicht nochmals in die Vorabpauschale einfließen.
-      // etfNetPurchasesThisYear enthält nur positive Zuflüsse (Käufe), keine Verkäufe.
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetPurchasesThisYear);
-      
-      // Vorabpauschale = min(Basisertrag, tatsächlicher Wertzuwachs)
-      // Bei negativer Wertentwicklung: keine Vorabpauschale
-      const vorabpauschale = Math.min(basisertrag, actualGain);
-      
-      if (vorabpauschale > 0) {
+      if (totalVorabpauschale > 0) {
         // Teilfreistellung: nur 70% sind steuerpflichtig
-        const taxableVorabpauschale = vorabpauschale * TEILFREISTELLUNG;
+        const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
         
         // Sparerpauschbetrag nutzen
         const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
@@ -2172,6 +2200,7 @@ function simulateStochastic(params, annualVolatility) {
   
   // Vorabpauschale-Tracking
   let etfValueYearStart = start_etf;
+  let etfPriceAtYearStart = currentEtfPrice;
   // Nur Käufe für Vorabpauschale (Verkäufe wurden bereits versteuert)
   let etfNetPurchasesThisYear = 0;
   
@@ -2191,6 +2220,7 @@ function simulateStochastic(params, annualVolatility) {
       currentTaxYear = yearIdx;
       yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
+      etfPriceAtYearStart = currentEtfPrice;
       etfNetPurchasesThisYear = 0;
     }
 
@@ -2377,18 +2407,40 @@ function simulateStochastic(params, annualVolatility) {
     }
 
     // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
+    // KORRIGIERT: Lot-basierte Berechnung mit Zeitanteilen und Cost-Basis-Erhöhung
     let vorabpauschaleTax = 0;
-    if (monthInYear === 12 && basiszins > 0 && etfValueYearStart > 0) {
-      const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
-      const etfValueYearEnd = totalEtfSharesNow * currentEtfPrice;
+    let totalVorabpauschale = 0;
+    if (monthInYear === 12 && basiszins > 0) {
+      const yearStartMonth = yearIdx * MONTHS_PER_YEAR;
       
-      const basisertrag = etfValueYearStart * (basiszins / 100) * 0.7;
-      // Nur Käufe abziehen, nicht Verkäufe (bereits versteuert)
-      const actualGain = Math.max(0, etfValueYearEnd - etfValueYearStart - etfNetPurchasesThisYear);
-      const vorabpauschale = Math.min(basisertrag, actualGain);
+      for (const lot of etfLots) {
+        if (lot.amount <= 0) continue;
+        
+        const boughtThisYear = lot.monthIdx > yearStartMonth;
+        const basisertragBase = boughtThisYear 
+          ? lot.amount * lot.price 
+          : lot.amount * etfPriceAtYearStart;
+        
+        let zeitanteil = 1;
+        if (boughtThisYear) {
+          const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
+          zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
+        }
+        
+        const lotBasisertrag = basisertragBase * (basiszins / 100) * 0.7 * zeitanteil;
+        const lotValueYearEnd = lot.amount * currentEtfPrice;
+        const lotValueStart = boughtThisYear ? lot.amount * lot.price : lot.amount * etfPriceAtYearStart;
+        const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
+        const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
+        
+        if (lotVorabpauschale > 0) {
+          totalVorabpauschale += lotVorabpauschale;
+          lot.price += lotVorabpauschale / lot.amount;
+        }
+      }
       
-      if (vorabpauschale > 0) {
-        const taxableVorabpauschale = vorabpauschale * TEILFREISTELLUNG;
+      if (totalVorabpauschale > 0) {
+        const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
         const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
         const taxableAfterFreibetrag = Math.max(0, taxableVorabpauschale - remainingFreibetrag);
         yearlyUsedFreibetrag += Math.min(taxableVorabpauschale, remainingFreibetrag);
@@ -2727,16 +2779,19 @@ function analyzeMonteCarloResults(allHistories, params) {
   const meanEnd = finalTotals.reduce((a, b) => a + b, 0) / numSims;
   
   // Durchschnittliche monatliche Rente und Gesamtentnahmen berechnen
+  // KORRIGIERT: Nutze tatsächlich ausgezahlte Beträge (withdrawal), nicht gewünschte (monthly_payout)
   const avgMonthlyWithdrawals = [];
   const avgMonthlyWithdrawalsReal = [];
   const totalWithdrawals = [];
   const totalWithdrawalsReal = [];
   
   for (const history of allHistories) {
-    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && r.monthly_payout > 0);
+    // Filter auf Entnahmephase mit tatsächlicher Auszahlung > 0
+    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && (r.withdrawal || 0) > 0);
     if (entnahmeRows.length > 0) {
-      const avgWithdrawal = entnahmeRows.reduce((sum, r) => sum + (r.monthly_payout || 0), 0) / entnahmeRows.length;
-      const avgWithdrawalReal = entnahmeRows.reduce((sum, r) => sum + (r.monthly_payout_real || r.monthly_payout || 0), 0) / entnahmeRows.length;
+      // KORRIGIERT: Nutze withdrawal (tatsächlich ausgezahlt), nicht monthly_payout (gewünscht)
+      const avgWithdrawal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal || 0), 0) / entnahmeRows.length;
+      const avgWithdrawalReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_real || 0), 0) / entnahmeRows.length;
       avgMonthlyWithdrawals.push(avgWithdrawal);
       avgMonthlyWithdrawalsReal.push(avgWithdrawalReal);
       
@@ -2763,9 +2818,25 @@ function analyzeMonteCarloResults(allHistories, params) {
   const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, totalMonths / MONTHS_PER_YEAR);
   const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
   
-  // Reale Rendite p.a. (Fisher-Gleichung)
-  const nominalReturnPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
-  const realReturnPa = ((1 + nominalReturnPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
+  // KORRIGIERT: Reale Rendite p.a. aus Simulationsergebnissen berechnen
+  // Verwende die Median-Vermögensentwicklung bis zum Rentenbeginn (ohne Entnahme-Effekte)
+  const startTotal = params.start_savings + params.start_etf;
+  const savingsYearsNum = params.savings_years || 1;
+  
+  // Berechne CAGR für das Median-Szenario in der Ansparphase
+  // (Rentenbeginn-Vermögen ist aussagekräftiger als Endvermögen wegen Entnahmen)
+  let realReturnPa = 0;
+  if (retirementMedian > 0 && startTotal > 0) {
+    // Annualisierte nominale Rendite aus Median-Vermögen bei Rentenbeginn
+    // Hinweis: Dies ist eine Approximation, da monatliche Einzahlungen nicht perfekt berücksichtigt werden
+    const nominalCagr = Math.pow(retirementMedian / Math.max(startTotal, 1), 1 / savingsYearsNum) - 1;
+    // Reale Rendite = (1 + nominal) / (1 + inflation) - 1
+    realReturnPa = ((1 + nominalCagr) / (1 + inflationRatePa / 100) - 1) * 100;
+  }
+  
+  // Input-basierte theoretische Rendite zum Vergleich
+  const theoreticalNominalPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
+  const theoreticalRealPa = ((1 + theoreticalNominalPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
   
   // Perzentile pro Monat berechnen (nominal und real)
   const percentiles = {
@@ -3040,13 +3111,25 @@ function renderMonteCarloGraph(results) {
   const padY = 50;
   const xDenom = Math.max(months.length - 1, 1);
   
+  // KORRIGIERT: Prüfe ob P5 oder P10 Nullen enthalten (echte Pleite-Szenarien)
+  const hasZeroScenarios = activePercentiles.p5.some(v => v <= 0) || activePercentiles.p10.some(v => v <= 0);
+  
+  // Bei Log-Skala mit Null-Szenarien: automatisch auf linear umschalten und Hinweis anzeigen
+  let effectiveLogScale = mcUseLogScale;
+  if (mcUseLogScale && hasZeroScenarios) {
+    effectiveLogScale = false; // Erzwinge lineare Skala bei Null-Szenarien
+  }
+  
   // Min/Max für beide Skalierungen
-  const minVal = Math.max(1000, Math.min(...activePercentiles.p5.filter(v => v > 0)));
+  const positiveP5 = activePercentiles.p5.filter(v => v > 0);
+  const minVal = effectiveLogScale 
+    ? Math.max(100, positiveP5.length > 0 ? Math.min(...positiveP5) : 100)
+    : 0; // Lineare Skala beginnt bei 0
   const maxVal = Math.max(minVal * 10, ...activePercentiles.p95);
   
   let toXY;
   
-  if (mcUseLogScale) {
+  if (effectiveLogScale) {
     // Logarithmische Skala
     const logMin = Math.log10(minVal);
     const logMax = Math.log10(maxVal);
@@ -3060,7 +3143,7 @@ function renderMonteCarloGraph(results) {
       return [x, y];
     };
   } else {
-    // Lineare Skala
+    // Lineare Skala (zeigt 0 korrekt an)
     toXY = (idx, val) => {
       const x = padX + (idx / xDenom) * (width - 2 * padX);
       const y = height - padY - (val / maxVal) * (height - 2 * padY);
