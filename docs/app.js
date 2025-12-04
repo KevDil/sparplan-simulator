@@ -1,6 +1,10 @@
 const TAX_RATE = 0.26375;
 const TEILFREISTELLUNG = 0.7;
 const SPARERPAUSCHBETRAG = 1000;
+const MONTHS_PER_YEAR = 12;
+const INITIAL_ETF_PRICE = 100;
+const Y_AXIS_STEPS = 5;
+const STORAGE_KEY = "etf_simulator_params";
 
 const nf0 = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
 const nf2 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -13,18 +17,208 @@ const tableBody = document.querySelector("#year-table tbody");
 
 let graphState = null;
 let lastHistory = [];
+let lastParams = null;
+
+// ============ UTILITY FUNCTIONS ============
 
 function toMonthlyRate(annualPercent) {
-  return Math.pow(1 + annualPercent / 100, 1 / 12) - 1;
+  return Math.pow(1 + annualPercent / 100, 1 / MONTHS_PER_YEAR) - 1;
 }
 
-function readNumber(id) {
+function readNumber(id, { min = null, max = null, allowZero = true } = {}) {
   const el = document.getElementById(id);
+  const label = el.previousElementSibling?.textContent || id;
   const val = parseFloat(String(el.value).replace(",", "."));
+  
   if (Number.isNaN(val)) {
-    throw new Error(`Bitte Wert prüfen: ${el.previousElementSibling?.textContent || id}`);
+    throw new Error(`Bitte Wert prüfen: ${label}`);
+  }
+  if (!allowZero && val === 0) {
+    throw new Error(`${label} darf nicht 0 sein.`);
+  }
+  if (min !== null && val < min) {
+    throw new Error(`${label} muss mindestens ${min} sein.`);
+  }
+  if (max !== null && val > max) {
+    throw new Error(`${label} darf maximal ${max} sein.`);
   }
   return val;
+}
+
+// ============ LOCALSTORAGE ============
+
+function saveToStorage(params) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+  } catch (e) { /* ignore */ }
+}
+
+function loadFromStorage() {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function applyStoredValues() {
+  const stored = loadFromStorage();
+  if (!stored) return;
+  
+  const fieldMap = {
+    start_savings: "start_savings",
+    start_etf: "start_etf",
+    savings_rate_pa: "savings_rate",
+    etf_rate_pa: "etf_rate",
+    savings_target: "savings_target",
+    savings_years: "years_save",
+    monthly_savings: "monthly_savings",
+    monthly_etf: "monthly_etf",
+    annual_raise_percent: "annual_raise",
+    special_payout_net_savings: "special_savings",
+    special_interval_years_savings: "special_savings_interval",
+    withdrawal_years: "years_withdraw",
+    monthly_payout_net: "rent_eur",
+    monthly_payout_percent: "rent_percent",
+    special_payout_net_withdrawal: "special_withdraw",
+    special_interval_years_withdrawal: "special_withdraw_interval",
+    inflation_rate_pa: "inflation_rate",
+  };
+  
+  for (const [paramKey, inputId] of Object.entries(fieldMap)) {
+    const el = document.getElementById(inputId);
+    if (el && stored[paramKey] != null) {
+      el.value = stored[paramKey];
+    }
+  }
+  
+  if (stored.rent_mode) {
+    const radio = form.querySelector(`input[name="rent_mode"][value="${stored.rent_mode}"]`);
+    if (radio) radio.checked = true;
+  }
+}
+
+function getDefaultValues() {
+  return {
+    start_savings: 2700,
+    start_etf: 100,
+    savings_rate: 3.0,
+    etf_rate: 7.0,
+    savings_target: 5000,
+    years_save: 15,
+    monthly_savings: 100,
+    monthly_etf: 150,
+    annual_raise: 3.0,
+    special_savings: 15000,
+    special_savings_interval: 10,
+    years_withdraw: 30,
+    rent_eur: 1000,
+    rent_percent: 4.0,
+    special_withdraw: 15000,
+    special_withdraw_interval: 10,
+    inflation_rate: 2.0,
+  };
+}
+
+function resetToDefaults() {
+  const defaults = getDefaultValues();
+  for (const [id, val] of Object.entries(defaults)) {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  }
+  const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
+  if (eurRadio) eurRadio.checked = true;
+  updateRentModeFields();
+  localStorage.removeItem(STORAGE_KEY);
+  messageEl.textContent = "Standardwerte wiederhergestellt.";
+}
+
+// ============ CSV EXPORT ============
+
+function exportToCsv(history) {
+  if (!history.length) {
+    messageEl.textContent = "Keine Daten zum Exportieren.";
+    return;
+  }
+  
+  const headers = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern"];
+  const rows = history.map(r => [
+    r.year,
+    r.month,
+    r.phase,
+    r.savings.toFixed(2),
+    r.etf.toFixed(2),
+    r.total.toFixed(2),
+    (r.total_real || r.total).toFixed(2),
+    (r.return_gain || 0).toFixed(2),
+    (r.withdrawal || 0).toFixed(2),
+    (r.tax_paid || 0).toFixed(2),
+  ]);
+  
+  const csvContent = [headers, ...rows].map(row => row.join(";")).join("\n");
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `etf_simulation_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  messageEl.textContent = "CSV exportiert.";
+}
+
+// ============ ETF SELLING (EXTRACTED) ============
+
+function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag) {
+  let taxPaid = 0;
+  let freibetragUsed = yearlyUsedFreibetrag;
+  
+  while (remaining > 0.01 && etfLots.length) {
+    const lot = etfLots[etfLots.length - 1];
+    const gainPerShare = currentEtfPrice - lot.price;
+    const remainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
+    let sharesNeeded;
+
+    if (gainPerShare > 0) {
+      const taxableGainPerShare = gainPerShare * TEILFREISTELLUNG;
+      const freibetragCoversShares = Math.min(
+        taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
+        lot.amount
+      );
+      const sharesIfTaxFree = remaining / currentEtfPrice;
+
+      if (sharesIfTaxFree <= freibetragCoversShares) {
+        sharesNeeded = sharesIfTaxFree;
+      } else {
+        const netFromFreibetrag = freibetragCoversShares * currentEtfPrice;
+        const stillNeeded = remaining - netFromFreibetrag;
+        const taxPerShareFull = taxableGainPerShare * TAX_RATE;
+        const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
+        if (netPerShareTaxed <= 0) break;
+        const additionalShares = stillNeeded / netPerShareTaxed;
+        sharesNeeded = freibetragCoversShares + additionalShares;
+      }
+    } else {
+      sharesNeeded = remaining / currentEtfPrice;
+    }
+
+    const sharesToSell = Math.min(sharesNeeded, lot.amount);
+    const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
+    const taxableAfterFreibetrag = Math.max(0, totalGain - Math.max(0, sparerpauschbetrag - freibetragUsed));
+    freibetragUsed += Math.min(totalGain, sparerpauschbetrag - freibetragUsed);
+    const partTax = taxableAfterFreibetrag * TAX_RATE;
+    const partNet = sharesToSell * currentEtfPrice - partTax;
+    remaining -= partNet;
+    taxPaid += partTax;
+
+    if (sharesNeeded >= lot.amount) {
+      etfLots.pop();
+    } else {
+      lot.amount -= sharesToSell;
+    }
+  }
+  
+  return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed };
 }
 
 function simulate(params) {
@@ -45,12 +239,13 @@ function simulate(params) {
     special_interval_years_savings,
     special_payout_net_withdrawal,
     special_interval_years_withdrawal,
+    inflation_rate_pa = 0,
     sparerpauschbetrag = SPARERPAUSCHBETRAG,
   } = params;
 
   const history = [];
   let savings = start_savings;
-  let currentEtfPrice = 100;
+  let currentEtfPrice = INITIAL_ETF_PRICE;
   const etfLots = [];
   if (start_etf > 0) {
     etfLots.push({ amount: start_etf / currentEtfPrice, price: currentEtfPrice, monthIdx: 0 });
@@ -58,8 +253,9 @@ function simulate(params) {
 
   const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
   const monthlyEtfRate = toMonthlyRate(etf_rate_pa);
+  const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
   const annualRaise = annual_raise_percent / 100;
-  const totalMonths = (savings_years + withdrawal_years) * 12;
+  const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
 
   let savingsFull = savings >= savings_target;
   let yearlyUsedFreibetrag = 0;
@@ -69,9 +265,14 @@ function simulate(params) {
   let payoutPercentPa = monthly_payout_percent;
   let entnahmeStartTotal = null;
 
+  let cumulativeInflation = 1;
+
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
-    const isSavingsPhase = monthIdx <= savings_years * 12;
-    const yearIdx = Math.floor((monthIdx - 1) / 12);
+    const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
+    const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
+    
+    // Inflation kumulieren
+    cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
 
@@ -123,7 +324,7 @@ function simulate(params) {
 
       // Sonderausgaben Ansparphase
       const inSpecial = special_interval_years_savings > 0
-        && monthIdx % (special_interval_years_savings * 12) === 0
+        && monthIdx % (special_interval_years_savings * MONTHS_PER_YEAR) === 0
         && monthIdx > 0;
 
       if (inSpecial) {
@@ -137,64 +338,11 @@ function simulate(params) {
           remaining -= use;
         }
 
-        // ETF verkaufen (steueroptimiert)
-        while (remaining > 0.01 && etfLots.length) {
-          const lot = etfLots[etfLots.length - 1];
-          const gainPerShare = currentEtfPrice - lot.price;
-          const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-          let sharesNeeded;
-
-          if (gainPerShare > 0) {
-            const taxableGainPerShare = gainPerShare * TEILFREISTELLUNG;
-            const freibetragCoversShares = Math.min(
-              taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
-              lot.amount
-            );
-            const sharesIfTaxFree = remaining / currentEtfPrice;
-
-            if (sharesIfTaxFree <= freibetragCoversShares) {
-              sharesNeeded = sharesIfTaxFree;
-            } else {
-              const netFromFreibetrag = freibetragCoversShares * currentEtfPrice;
-              const stillNeeded = remaining - netFromFreibetrag;
-              const taxPerShareFull = taxableGainPerShare * TAX_RATE;
-              const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
-              if (netPerShareTaxed <= 0) break;
-              const additionalShares = stillNeeded / netPerShareTaxed;
-              sharesNeeded = freibetragCoversShares + additionalShares;
-            }
-          } else {
-            sharesNeeded = remaining / currentEtfPrice;
-          }
-
-          if (sharesNeeded >= lot.amount) {
-            const sharesToSell = lot.amount;
-            const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
-            const taxableAfterFreibetrag = Math.max(
-              0,
-              totalGain - Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag)
-            );
-            yearlyUsedFreibetrag += Math.min(totalGain, sparerpauschbetrag - yearlyUsedFreibetrag);
-            const partTax = taxableAfterFreibetrag * TAX_RATE;
-            const partNet = sharesToSell * currentEtfPrice - partTax;
-            remaining -= partNet;
-            tax_paid += partTax;
-            etfLots.pop();
-          } else {
-            const sharesToSell = sharesNeeded;
-            const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
-            const taxableAfterFreibetrag = Math.max(
-              0,
-              totalGain - Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag)
-            );
-            yearlyUsedFreibetrag += Math.min(totalGain, sparerpauschbetrag - yearlyUsedFreibetrag);
-            const partTax = taxableAfterFreibetrag * TAX_RATE;
-            const partNet = sharesToSell * currentEtfPrice - partTax;
-            lot.amount -= sharesToSell;
-            remaining -= partNet;
-            tax_paid += partTax;
-          }
-        }
+        // ETF verkaufen (steueroptimiert) - extrahierte Funktion
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag);
+        remaining = sellResult.remaining;
+        tax_paid += sellResult.taxPaid;
+        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
 
         // TG unter Ziel
         if (remaining > 0.01) {
@@ -229,7 +377,7 @@ function simulate(params) {
 
       let needed_net = payoutValue || 0;
       if (special_interval_years_withdrawal > 0
-        && monthIdx % (special_interval_years_withdrawal * 12) === 0) {
+        && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
         needed_net += special_payout_net_withdrawal;
       }
 
@@ -244,63 +392,11 @@ function simulate(params) {
           remaining -= use;
         }
 
-        while (remaining > 0.01 && etfLots.length) {
-          const lot = etfLots[etfLots.length - 1];
-          const gainPerShare = currentEtfPrice - lot.price;
-          const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-          let sharesNeeded;
-
-          if (gainPerShare > 0) {
-            const taxableGainPerShare = gainPerShare * TEILFREISTELLUNG;
-            const freibetragCoversShares = Math.min(
-              taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
-              lot.amount
-            );
-            const sharesIfTaxFree = remaining / currentEtfPrice;
-
-            if (sharesIfTaxFree <= freibetragCoversShares) {
-              sharesNeeded = sharesIfTaxFree;
-            } else {
-              const netFromFreibetrag = freibetragCoversShares * currentEtfPrice;
-              const stillNeeded = remaining - netFromFreibetrag;
-              const taxPerShareFull = taxableGainPerShare * TAX_RATE;
-              const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
-              if (netPerShareTaxed <= 0) break;
-              const additionalShares = stillNeeded / netPerShareTaxed;
-              sharesNeeded = freibetragCoversShares + additionalShares;
-            }
-          } else {
-            sharesNeeded = remaining / currentEtfPrice;
-          }
-
-          if (sharesNeeded >= lot.amount) {
-            const sharesToSell = lot.amount;
-            const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
-            const taxableAfterFreibetrag = Math.max(
-              0,
-              totalGain - Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag)
-            );
-            yearlyUsedFreibetrag += Math.min(totalGain, sparerpauschbetrag - yearlyUsedFreibetrag);
-            const partTax = taxableAfterFreibetrag * TAX_RATE;
-            const partNet = sharesToSell * currentEtfPrice - partTax;
-            remaining -= partNet;
-            tax_paid += partTax;
-            etfLots.pop();
-          } else {
-            const sharesToSell = sharesNeeded;
-            const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
-            const taxableAfterFreibetrag = Math.max(
-              0,
-              totalGain - Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag)
-            );
-            yearlyUsedFreibetrag += Math.min(totalGain, sparerpauschbetrag - yearlyUsedFreibetrag);
-            const partTax = taxableAfterFreibetrag * TAX_RATE;
-            const partNet = sharesToSell * currentEtfPrice - partTax;
-            lot.amount -= sharesToSell;
-            remaining -= partNet;
-            tax_paid += partTax;
-          }
-        }
+        // ETF verkaufen (steueroptimiert) - extrahierte Funktion
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag);
+        remaining = sellResult.remaining;
+        tax_paid += sellResult.taxPaid;
+        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -320,6 +416,7 @@ function simulate(params) {
     // Gesamtwerte
     const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const etf_value = totalEtfShares * currentEtfPrice;
+    const total = savings + etf_value;
 
     history.push({
       month: monthIdx,
@@ -327,7 +424,8 @@ function simulate(params) {
       phase: isSavingsPhase ? "Anspar" : "Entnahme",
       savings,
       etf: etf_value,
-      total: savings + etf_value,
+      total,
+      total_real: total / cumulativeInflation,
       savings_contrib,
       etf_contrib,
       savings_interest: savingsInterest,
@@ -369,6 +467,7 @@ function renderTable(history) {
       <td>${formatCurrency(lastRow.savings)}</td>
       <td>${formatCurrency(lastRow.etf)}</td>
       <td>${formatCurrency(lastRow.total)}</td>
+      <td>${formatCurrency(lastRow.total_real || lastRow.total)}</td>
       <td>${formatCurrency(yearReturn)}</td>
       <td>${formatCurrency(yearWithdrawal)}</td>
       <td>${formatCurrency(yearTax)}</td>
@@ -436,9 +535,8 @@ function renderGraph(history) {
   ctx.fillStyle = "#94a3b8";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const steps = 5;
-  for (let i = 0; i <= steps; i += 1) {
-    const val = maxVal * (i / steps);
+  for (let i = 0; i <= Y_AXIS_STEPS; i += 1) {
+    const val = maxVal * (i / Y_AXIS_STEPS);
     const [, y] = toXY(0, val);
     ctx.strokeStyle = "rgba(255,255,255,0.05)";
     ctx.beginPath();
@@ -453,7 +551,7 @@ function renderGraph(history) {
   ctx.textBaseline = "top";
   const lastYear = history[history.length - 1].year;
   for (let year = 1; year <= lastYear; year += 1) {
-    const idx = Math.min(year * 12 - 1, history.length - 1);
+    const idx = Math.min(year * MONTHS_PER_YEAR - 1, history.length - 1);
     const [x] = toXY(idx, 0);
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.beginPath();
@@ -520,6 +618,7 @@ function handleHover(evt) {
   const lines = [
     `Jahr ${row.year}, Monat ${row.month}`,
     `Gesamt: ${formatCurrency(row.total)}`,
+    `Real (inflationsbereinigt): ${formatCurrency(row.total_real || row.total)}`,
     `ETF: ${formatCurrency(row.etf)} | TG: ${formatCurrency(row.savings)}`
   ];
   tooltip.textContent = lines.join("\n");
@@ -549,39 +648,71 @@ function updateRentFields(history, mode) {
   }
 }
 
+function updateRentModeFields() {
+  const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+  const rentEur = document.getElementById("rent_eur");
+  const rentPercent = document.getElementById("rent_percent");
+  
+  if (rentEur) {
+    rentEur.disabled = mode !== "eur";
+    rentEur.closest(".field")?.classList.toggle("field--disabled", mode !== "eur");
+  }
+  if (rentPercent) {
+    rentPercent.disabled = mode !== "percent";
+    rentPercent.closest(".field")?.classList.toggle("field--disabled", mode !== "percent");
+  }
+}
+
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   try {
     messageEl.textContent = "";
     const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+    
+    // Validierte Parameter mit Grenzen
     const params = {
-      start_savings: readNumber("start_savings"),
-      start_etf: readNumber("start_etf"),
-      monthly_savings: readNumber("monthly_savings"),
-      monthly_etf: readNumber("monthly_etf"),
-      savings_rate_pa: readNumber("savings_rate"),
-      etf_rate_pa: readNumber("etf_rate"),
-      savings_target: readNumber("savings_target"),
-      annual_raise_percent: readNumber("annual_raise"),
-      savings_years: readNumber("years_save"),
-      withdrawal_years: readNumber("years_withdraw"),
-      monthly_payout_net: mode === "eur" ? readNumber("rent_eur") : null,
-      monthly_payout_percent: mode === "percent" ? readNumber("rent_percent") : null,
-      special_payout_net_savings: readNumber("special_savings"),
-      special_interval_years_savings: readNumber("special_savings_interval"),
-      special_payout_net_withdrawal: readNumber("special_withdraw"),
-      special_interval_years_withdrawal: readNumber("special_withdraw_interval"),
+      start_savings: readNumber("start_savings", { min: 0 }),
+      start_etf: readNumber("start_etf", { min: 0 }),
+      monthly_savings: readNumber("monthly_savings", { min: 0 }),
+      monthly_etf: readNumber("monthly_etf", { min: 0 }),
+      savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+      etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+      savings_target: readNumber("savings_target", { min: 0 }),
+      annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+      savings_years: readNumber("years_save", { min: 1, max: 100 }),
+      withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+      monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+      monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+      special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+      special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+      special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+      special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+      inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+      rent_mode: mode,
     };
 
     lastHistory = simulate(params);
+    lastParams = params;
     renderGraph(lastHistory);
     renderTable(lastHistory);
     updateRentFields(lastHistory, mode);
+    saveToStorage(params);
     messageEl.textContent = "Simulation aktualisiert.";
   } catch (err) {
     messageEl.textContent = err.message || String(err);
   }
 });
+
+// Event-Listener für Rentenmodus-Toggle
+form.querySelectorAll('input[name="rent_mode"]').forEach(radio => {
+  radio.addEventListener("change", updateRentModeFields);
+});
+
+// Reset-Button
+document.getElementById("btn-reset")?.addEventListener("click", resetToDefaults);
+
+// CSV-Export
+document.getElementById("btn-export")?.addEventListener("click", () => exportToCsv(lastHistory));
 
 graphCanvas.addEventListener("mousemove", handleHover);
 graphCanvas.addEventListener("mouseleave", hideTooltip);
@@ -589,5 +720,7 @@ window.addEventListener("resize", () => {
   if (lastHistory.length) renderGraph(lastHistory);
 });
 
-// erste Berechnung mit Defaultwerten
+// Gespeicherte Werte laden und Simulation starten
+applyStoredValues();
+updateRentModeFields();
 form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));

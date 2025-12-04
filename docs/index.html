@@ -47,6 +47,10 @@
               <span>Tagesgeld-Ziel (EUR)</span>
               <input type="number" step="100" id="savings_target" value="5000">
             </label>
+            <label class="field">
+              <span>Inflation p.a. (%)</span>
+              <input type="number" step="0.1" id="inflation_rate" value="2.0">
+            </label>
           </div>
         </div>
 
@@ -120,8 +124,12 @@
         </div>
 
         <div class="actions">
-          <button type="submit" class="btn">Simulation starten</button>
-          <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick“ (jüngste Anteile zuerst) für geringere Steuerlast. Sparerpauschbetrag 1000 EUR/Jahr.</p>
+          <button type="submit" class="btn btn--primary">Simulation starten</button>
+          <div class="btn-group">
+            <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
+            <button type="button" id="btn-export" class="btn btn--secondary">CSV Export</button>
+          </div>
+          <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick" (jüngste Anteile zuerst) für geringere Steuerlast. Sparerpauschbetrag 1000 EUR/Jahr.</p>
         </div>
         <div id="message" class="message" role="alert" aria-live="polite"></div>
       </form>
@@ -158,6 +166,7 @@
               <th>TG-Saldo</th>
               <th>ETF-Saldo</th>
               <th>Gesamt</th>
+              <th>Gesamt (real)</th>
               <th>Rendite</th>
               <th>Entnahme</th>
               <th>Steuern</th>
