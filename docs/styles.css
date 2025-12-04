@@ -990,21 +990,21 @@ select option {
 }
 
 .stat-card--worst {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.05);
+  border-color: rgba(251, 146, 60, 0.3);
+  background: rgba(251, 146, 60, 0.05);
 }
 
 .stat-card--worst .stat-value {
-  color: #ef4444;
+  color: #fb923c;
 }
 
 .stat-card--best {
-  border-color: rgba(34, 197, 94, 0.3);
-  background: rgba(34, 197, 94, 0.05);
+  border-color: rgba(56, 189, 248, 0.3);
+  background: rgba(56, 189, 248, 0.05);
 }
 
 .stat-card--best .stat-value {
-  color: #22c55e;
+  color: #38bdf8;
 }
 
 /* Kapitalerhalt-Modus */

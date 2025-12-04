@@ -2934,6 +2934,8 @@ function analyzeMonteCarloResults(allHistories, params) {
     p10End: percentile(finalTotals, 10),
     p90End: percentile(finalTotals, 90),
     p5End: percentile(finalTotals, 5),
+    p25End: percentile(finalTotals, 25),
+    p75End: percentile(finalTotals, 75),
     p95End: percentile(finalTotals, 95),
     savingsYears: params.savings_years,
     // Zusätzliche Metriken
@@ -2947,6 +2949,8 @@ function analyzeMonteCarloResults(allHistories, params) {
     p10EndReal: percentile(finalTotalsReal, 10),
     p90EndReal: percentile(finalTotalsReal, 90),
     p5EndReal: percentile(finalTotalsReal, 5),
+    p25EndReal: percentile(finalTotalsReal, 25),
+    p75EndReal: percentile(finalTotalsReal, 75),
     p95EndReal: percentile(finalTotalsReal, 95),
     meanEndReal: finalTotalsReal.reduce((a, b) => a + b, 0) / numSims,
     retirementMedianReal: percentile(
@@ -2988,16 +2992,16 @@ function renderMonteCarloStats(results) {
   document.getElementById("mc-median-end").textContent = formatCurrency(results.medianEnd);
   document.getElementById("mc-range-end").textContent = 
     `${formatCurrency(results.p10End)} - ${formatCurrency(results.p90End)}`;
-  document.getElementById("mc-worst-case").textContent = formatCurrency(results.p5End);
-  document.getElementById("mc-best-case").textContent = formatCurrency(results.p95End);
+  document.getElementById("mc-worst-case").textContent = formatCurrency(results.p25End);
+  document.getElementById("mc-best-case").textContent = formatCurrency(results.p75End);
   document.getElementById("mc-iterations-done").textContent = nf0.format(results.iterations);
   
   // Inflationsbereinigte Werte (real)
   document.getElementById("mc-median-end-real").textContent = formatCurrency(results.medianEndReal);
   document.getElementById("mc-range-end-real").textContent = 
     `${formatCurrency(results.p10EndReal)} - ${formatCurrency(results.p90EndReal)}`;
-  document.getElementById("mc-worst-case-real").textContent = formatCurrency(results.p5EndReal);
-  document.getElementById("mc-best-case-real").textContent = formatCurrency(results.p95EndReal);
+  document.getElementById("mc-worst-case-real").textContent = formatCurrency(results.p25EndReal);
+  document.getElementById("mc-best-case-real").textContent = formatCurrency(results.p75EndReal);
   
   // Zusätzliche Metriken - Nominale Werte
   document.getElementById("mc-retirement-wealth").textContent = formatCurrency(results.retirementMedian);
