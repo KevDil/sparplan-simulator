@@ -158,6 +158,28 @@ p {
   color: var(--accent-2);
 }
 
+.info-section h4 {
+  font-size: 14px;
+  margin: 14px 0 8px 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.info-section h4:first-of-type {
+  margin-top: 10px;
+}
+
+.info-section ul ul {
+  margin-top: 4px;
+  padding-left: 18px;
+}
+
+.info-section ul ul li {
+  margin-bottom: 3px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .info-section p {
   color: var(--text);
   line-height: 1.7;
@@ -1201,4 +1223,73 @@ canvas#mc-graph {
   .stat-value {
     color: black;
   }
+}
+
+/* Export Dropdown */
+.export-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.export-menu {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 200px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.export-menu.active {
+  display: block;
+}
+
+.export-menu-section {
+  padding: 8px 0;
+}
+
+.export-menu-section:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.export-menu-title {
+  display: block;
+  padding: 4px 14px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.export-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.export-menu-item:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.export-menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.export-menu-item:disabled:hover {
+  background: transparent;
 }

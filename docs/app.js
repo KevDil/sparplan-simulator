@@ -241,6 +241,518 @@ function exportToCsv(history, params = lastParams) {
   messageEl.textContent = "CSV exportiert (inkl. Einstellungen).";
 }
 
+// ============ MONTE-CARLO CSV EXPORT ============
+
+function exportMonteCarloToCsv(results, params = lastParams) {
+  if (!results) {
+    messageEl.textContent = "Keine Monte-Carlo-Daten zum Exportieren. Bitte zuerst Simulation starten.";
+    return;
+  }
+  
+  const settingsHeader = ["Einstellung", "Wert"];
+  const settingsRows = [
+    settingsHeader,
+    ["Exportzeitpunkt", new Date().toISOString()],
+    ["Simulationstyp", "Monte-Carlo"],
+    ["Anzahl Simulationen", results.iterations],
+    ...Object.entries(params || {}).map(([key, val]) => [key, val ?? ""]),
+    [],
+  ];
+  
+  // Zusammenfassung
+  const summaryRows = [
+    ["=== ZUSAMMENFASSUNG ===", ""],
+    ["Erfolgswahrscheinlichkeit", `${results.successRate.toFixed(1)}%`],
+    ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
+    ["Pleite-Risiko", `${results.ruinProbability.toFixed(1)}%`],
+    [],
+    ["Endvermögen (Median)", results.medianEnd.toFixed(2)],
+    ["Endvermögen (10%-Perzentil)", results.p10End.toFixed(2)],
+    ["Endvermögen (90%-Perzentil)", results.p90End.toFixed(2)],
+    ["Endvermögen (5%-Perzentil, Worst)", results.p5End.toFixed(2)],
+    ["Endvermögen (95%-Perzentil, Best)", results.p95End.toFixed(2)],
+    ["Endvermögen (Durchschnitt)", results.meanEnd.toFixed(2)],
+    [],
+    ["Endvermögen real (Median)", results.medianEndReal.toFixed(2)],
+    ["Endvermögen real (10%-90%)", `${results.p10EndReal.toFixed(2)} - ${results.p90EndReal.toFixed(2)}`],
+    ["Vermögen bei Rentenbeginn (Median)", results.retirementMedian.toFixed(2)],
+    [],
+  ];
+  
+  // Perzentile pro Monat
+  const percentileHeader = ["Monat", "Jahr", "P5", "P10", "P25", "P50 (Median)", "P75", "P90", "P95"];
+  const percentileRows = results.months.map((month, idx) => [
+    month,
+    Math.ceil(month / 12),
+    results.percentiles.p5[idx].toFixed(2),
+    results.percentiles.p10[idx].toFixed(2),
+    results.percentiles.p25[idx].toFixed(2),
+    results.percentiles.p50[idx].toFixed(2),
+    results.percentiles.p75[idx].toFixed(2),
+    results.percentiles.p90[idx].toFixed(2),
+    results.percentiles.p95[idx].toFixed(2),
+  ]);
+  
+  const csvContent = [
+    ...settingsRows,
+    ...summaryRows,
+    ["=== PERZENTILE PRO MONAT ===", "", "", "", "", "", "", "", ""],
+    percentileHeader,
+    ...percentileRows
+  ].map(row => row.join(";")).join("\n");
+  
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `monte_carlo_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  messageEl.textContent = "Monte-Carlo CSV exportiert.";
+}
+
+// ============ PDF EXPORT ============
+
+async function exportToPdf(history, params = lastParams) {
+  if (!history.length) {
+    messageEl.textContent = "Keine Daten zum Exportieren.";
+    return;
+  }
+  
+  messageEl.textContent = "PDF wird erstellt...";
+  
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    let y = margin;
+    
+    // Header
+    doc.setFontSize(20);
+    doc.setFont("helvetica", "bold");
+    doc.text("ETF Sparplan-Simulation", margin, y);
+    y += 8;
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100);
+    doc.text(`Erstellt am ${new Date().toLocaleDateString("de-DE")} um ${new Date().toLocaleTimeString("de-DE")}`, margin, y);
+    y += 12;
+    
+    doc.setTextColor(0);
+    
+    // Eingabeparameter
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Eingabeparameter", margin, y);
+    y += 7;
+    
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    
+    const paramLabels = {
+      start_savings: "Start Tagesgeld",
+      start_etf: "Start ETF",
+      savings_rate_pa: "TG-Zins p.a.",
+      etf_rate_pa: "ETF-Rendite p.a.",
+      etf_ter_pa: "ETF TER p.a.",
+      savings_target: "Tagesgeld-Ziel",
+      savings_years: "Ansparphase (Jahre)",
+      withdrawal_years: "Entnahmephase (Jahre)",
+      monthly_savings: "Monatl. TG-Sparrate",
+      monthly_etf: "Monatl. ETF-Sparrate",
+      annual_raise_percent: "Gehaltserh. p.a.",
+      monthly_payout_net: "Wunschrente (EUR)",
+      monthly_payout_percent: "Wunschrente (%)",
+      inflation_rate_pa: "Inflation p.a.",
+      sparerpauschbetrag: "Sparerpauschbetrag",
+    };
+    
+    const col1X = margin;
+    const col2X = margin + 55;
+    const col3X = margin + 110;
+    let paramY = y;
+    let colIdx = 0;
+    
+    for (const [key, label] of Object.entries(paramLabels)) {
+      if (params[key] !== undefined && params[key] !== null) {
+        const x = colIdx === 0 ? col1X : colIdx === 1 ? col2X : col3X;
+        const val = typeof params[key] === "number" 
+          ? (key.includes("rate") || key.includes("percent") ? `${params[key]}%` : `${nf0.format(params[key])} €`)
+          : params[key];
+        doc.text(`${label}: ${val}`, x, paramY);
+        colIdx++;
+        if (colIdx > 2) {
+          colIdx = 0;
+          paramY += 5;
+        }
+      }
+    }
+    y = paramY + 10;
+    
+    // Chart als Bild
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Vermögensverlauf", margin, y);
+    y += 5;
+    
+    try {
+      const canvas = document.getElementById("graph");
+      const chartImage = canvas.toDataURL("image/png", 1.0);
+      const chartWidth = pageWidth - 2 * margin;
+      const chartHeight = chartWidth * 0.5;
+      doc.addImage(chartImage, "PNG", margin, y, chartWidth, chartHeight);
+      y += chartHeight + 10;
+    } catch (e) {
+      doc.setFontSize(9);
+      doc.text("(Chart konnte nicht eingefügt werden)", margin, y);
+      y += 10;
+    }
+    
+    // Statistiken
+    if (y > pageHeight - 80) {
+      doc.addPage();
+      y = margin;
+    }
+    
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Ergebnisse", margin, y);
+    y += 7;
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    
+    const lastRow = history[history.length - 1];
+    const ansparRows = history.filter(r => r.phase === "Anspar");
+    const entnahmeRows = history.filter(r => r.phase === "Entnahme");
+    const totalInvested = (params.start_savings || 0) + (params.start_etf || 0) +
+      ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
+    const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
+    const totalTax = history.reduce((sum, r) => sum + (r.tax_paid || 0), 0);
+    
+    const stats = [
+      ["Endvermögen (nominal)", formatCurrency(lastRow.total)],
+      ["Endvermögen (real)", formatCurrency(lastRow.total_real || lastRow.total)],
+      ["Eingezahlt gesamt", formatCurrency(totalInvested)],
+      ["Rendite gesamt", formatCurrency(totalReturn)],
+      ["Steuern gesamt", formatCurrency(totalTax)],
+    ];
+    
+    if (entnahmeRows.length > 0) {
+      const withdrawals = entnahmeRows.filter(r => r.monthly_payout > 0).map(r => r.monthly_payout);
+      if (withdrawals.length > 0) {
+        const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
+        stats.push(["Ø Entnahme/Monat", formatCurrency(avgWithdrawal)]);
+      }
+    }
+    
+    for (const [label, val] of stats) {
+      doc.text(`${label}: ${val}`, margin, y);
+      y += 5;
+    }
+    y += 5;
+    
+    // Jahresübersicht (kompakt)
+    if (y > pageHeight - 60) {
+      doc.addPage();
+      y = margin;
+    }
+    
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Jahresübersicht", margin, y);
+    y += 7;
+    
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    const tableHeaders = ["Jahr", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Entnahme", "Steuern"];
+    const colWidths = [12, 18, 25, 25, 25, 28, 22, 20];
+    let x = margin;
+    for (let i = 0; i < tableHeaders.length; i++) {
+      doc.text(tableHeaders[i], x, y);
+      x += colWidths[i];
+    }
+    y += 5;
+    
+    // Trennlinie
+    doc.setDrawColor(200);
+    doc.line(margin, y - 2, pageWidth - margin, y - 2);
+    
+    doc.setFont("helvetica", "normal");
+    
+    // Aggregiere nach Jahr
+    let currentYear = history[0].year;
+    let yearData = { withdrawal: 0, tax: 0, lastRow: null };
+    
+    const flushYear = () => {
+      if (!yearData.lastRow) return;
+      x = margin;
+      const r = yearData.lastRow;
+      const rowData = [
+        String(currentYear),
+        r.phase,
+        formatCurrency(r.savings),
+        formatCurrency(r.etf),
+        formatCurrency(r.total),
+        formatCurrency(r.total_real || r.total),
+        formatCurrency(yearData.withdrawal),
+        formatCurrency(yearData.tax)
+      ];
+      for (let i = 0; i < rowData.length; i++) {
+        doc.text(rowData[i], x, y);
+        x += colWidths[i];
+      }
+      y += 4;
+      
+      if (y > pageHeight - 15) {
+        doc.addPage();
+        y = margin;
+      }
+    };
+    
+    for (const row of history) {
+      if (row.year !== currentYear) {
+        flushYear();
+        currentYear = row.year;
+        yearData = { withdrawal: 0, tax: 0, lastRow: null };
+      }
+      yearData.withdrawal += row.withdrawal || 0;
+      yearData.tax += row.tax_paid || 0;
+      yearData.lastRow = row;
+    }
+    flushYear();
+    
+    // Footer
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text("Erstellt mit ETF Sparplan-Simulator | Simulation, keine Anlageberatung", margin, pageHeight - 10);
+    
+    doc.save(`etf_simulation_${new Date().toISOString().slice(0, 10)}.pdf`);
+    messageEl.textContent = "PDF exportiert.";
+    
+  } catch (err) {
+    console.error("PDF Export Error:", err);
+    messageEl.textContent = "Fehler beim PDF-Export: " + err.message;
+  }
+}
+
+// ============ MONTE-CARLO PDF EXPORT ============
+
+async function exportMonteCarloToPdf(results, params = lastParams) {
+  if (!results) {
+    messageEl.textContent = "Keine Monte-Carlo-Daten zum Exportieren. Bitte zuerst Simulation starten.";
+    return;
+  }
+  
+  messageEl.textContent = "PDF wird erstellt...";
+  
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    let y = margin;
+    
+    // Header
+    doc.setFontSize(20);
+    doc.setFont("helvetica", "bold");
+    doc.text("Monte-Carlo-Simulation", margin, y);
+    y += 8;
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100);
+    doc.text(`${nf0.format(results.iterations)} Simulationen | Erstellt am ${new Date().toLocaleDateString("de-DE")}`, margin, y);
+    y += 12;
+    
+    doc.setTextColor(0);
+    
+    // Erfolgswahrscheinlichkeit (prominent)
+    doc.setFillColor(240, 240, 240);
+    doc.roundedRect(margin, y, pageWidth - 2 * margin, 25, 3, 3, "F");
+    
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.text("Erfolgswahrscheinlichkeit", margin + 5, y + 8);
+    
+    doc.setFontSize(24);
+    doc.setFont("helvetica", "bold");
+    const successColor = results.successRate >= 95 ? [34, 197, 94] : results.successRate >= 80 ? [245, 158, 11] : [239, 68, 68];
+    doc.setTextColor(...successColor);
+    doc.text(`${results.successRate.toFixed(1)}%`, margin + 5, y + 20);
+    
+    doc.setTextColor(0);
+    y += 32;
+    
+    // Chart
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Vermögensverteilung über Zeit", margin, y);
+    y += 5;
+    
+    try {
+      const canvas = document.getElementById("mc-graph");
+      const chartImage = canvas.toDataURL("image/png", 1.0);
+      const chartWidth = pageWidth - 2 * margin;
+      const chartHeight = chartWidth * 0.5;
+      doc.addImage(chartImage, "PNG", margin, y, chartWidth, chartHeight);
+      y += chartHeight + 10;
+    } catch (e) {
+      doc.setFontSize(9);
+      doc.text("(Chart konnte nicht eingefügt werden)", margin, y);
+      y += 10;
+    }
+    
+    // Statistiken
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Ergebnisse", margin, y);
+    y += 7;
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    
+    const statsLeft = [
+      ["Endvermögen (Median)", formatCurrency(results.medianEnd)],
+      ["Endvermögen (10%-90%)", `${formatCurrency(results.p10End)} - ${formatCurrency(results.p90End)}`],
+      ["Worst Case (5%)", formatCurrency(results.p5End)],
+      ["Best Case (95%)", formatCurrency(results.p95End)],
+      ["Durchschnitt", formatCurrency(results.meanEnd)],
+    ];
+    
+    const statsRight = [
+      ["Endvermögen real (Median)", formatCurrency(results.medianEndReal)],
+      ["Endvermögen real (10%-90%)", `${formatCurrency(results.p10EndReal)} - ${formatCurrency(results.p90EndReal)}`],
+      ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
+      ["Pleite-Risiko", `${results.ruinProbability.toFixed(1)}%`],
+      ["Vermögen bei Rentenbeginn", formatCurrency(results.retirementMedian)],
+    ];
+    
+    const leftX = margin;
+    const rightX = margin + 90;
+    
+    for (let i = 0; i < Math.max(statsLeft.length, statsRight.length); i++) {
+      if (statsLeft[i]) {
+        doc.text(`${statsLeft[i][0]}: ${statsLeft[i][1]}`, leftX, y);
+      }
+      if (statsRight[i]) {
+        doc.text(`${statsRight[i][0]}: ${statsRight[i][1]}`, rightX, y);
+      }
+      y += 5;
+    }
+    y += 5;
+    
+    // Eingabeparameter (Seite 2)
+    doc.addPage();
+    y = margin;
+    
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Eingabeparameter", margin, y);
+    y += 7;
+    
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    
+    if (params) {
+      const paramLabels = {
+        start_savings: "Start Tagesgeld",
+        start_etf: "Start ETF",
+        savings_rate_pa: "TG-Zins p.a.",
+        etf_rate_pa: "ETF-Rendite p.a.",
+        etf_ter_pa: "ETF TER p.a.",
+        savings_target: "Tagesgeld-Ziel",
+        savings_years: "Ansparphase (Jahre)",
+        withdrawal_years: "Entnahmephase (Jahre)",
+        monthly_savings: "Monatl. TG-Sparrate",
+        monthly_etf: "Monatl. ETF-Sparrate",
+        annual_raise_percent: "Gehaltserh. p.a.",
+        monthly_payout_net: "Wunschrente (EUR)",
+        monthly_payout_percent: "Wunschrente (%)",
+        inflation_rate_pa: "Inflation p.a.",
+        sparerpauschbetrag: "Sparerpauschbetrag",
+      };
+      
+      for (const [key, label] of Object.entries(paramLabels)) {
+        if (params[key] !== undefined && params[key] !== null) {
+          const val = typeof params[key] === "number" 
+            ? (key.includes("rate") || key.includes("percent") ? `${params[key]}%` : `${nf0.format(params[key])} €`)
+            : params[key];
+          doc.text(`${label}: ${val}`, margin, y);
+          y += 5;
+        }
+      }
+    }
+    
+    // Perzentil-Tabelle (Jahresweise)
+    y += 10;
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("Perzentile nach Jahr", margin, y);
+    y += 7;
+    
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    const tableHeaders = ["Jahr", "5%", "10%", "25%", "50%", "75%", "90%", "95%"];
+    const colWidths = [15, 23, 23, 23, 23, 23, 23, 23];
+    let x = margin;
+    for (let i = 0; i < tableHeaders.length; i++) {
+      doc.text(tableHeaders[i], x, y);
+      x += colWidths[i];
+    }
+    y += 4;
+    
+    doc.setDrawColor(200);
+    doc.line(margin, y - 1, pageWidth - margin, y - 1);
+    
+    doc.setFont("helvetica", "normal");
+    
+    // Nur Jahresende-Werte
+    for (let year = 1; year <= Math.ceil(results.months.length / 12); year++) {
+      const monthIdx = Math.min(year * 12 - 1, results.months.length - 1);
+      x = margin;
+      const rowData = [
+        String(year),
+        formatCurrency(results.percentiles.p5[monthIdx]),
+        formatCurrency(results.percentiles.p10[monthIdx]),
+        formatCurrency(results.percentiles.p25[monthIdx]),
+        formatCurrency(results.percentiles.p50[monthIdx]),
+        formatCurrency(results.percentiles.p75[monthIdx]),
+        formatCurrency(results.percentiles.p90[monthIdx]),
+        formatCurrency(results.percentiles.p95[monthIdx]),
+      ];
+      for (let i = 0; i < rowData.length; i++) {
+        doc.text(rowData[i], x, y);
+        x += colWidths[i];
+      }
+      y += 4;
+      
+      if (y > pageHeight - 15) {
+        doc.addPage();
+        y = margin;
+      }
+    }
+    
+    // Footer
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text("Erstellt mit ETF Sparplan-Simulator | Simulation, keine Anlageberatung", margin, pageHeight - 10);
+    
+    doc.save(`monte_carlo_${new Date().toISOString().slice(0, 10)}.pdf`);
+    messageEl.textContent = "Monte-Carlo PDF exportiert.";
+    
+  } catch (err) {
+    console.error("PDF Export Error:", err);
+    messageEl.textContent = "Fehler beim PDF-Export: " + err.message;
+  }
+}
+
 // ============ ETF SELLING (EXTRACTED) ============
 
 function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate) {
@@ -1046,8 +1558,47 @@ form.querySelectorAll('input[name="rent_mode"]').forEach(radio => {
 // Reset-Button
 document.getElementById("btn-reset")?.addEventListener("click", resetToDefaults);
 
-// CSV-Export
-document.getElementById("btn-export")?.addEventListener("click", () => exportToCsv(lastHistory));
+// ============ EXPORT DROPDOWN ============
+
+const exportMenu = document.getElementById("export-menu");
+const exportToggle = document.getElementById("btn-export-toggle");
+
+// Toggle Export Dropdown
+exportToggle?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  exportMenu?.classList.toggle("active");
+});
+
+// Close dropdown when clicking outside
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".export-dropdown")) {
+    exportMenu?.classList.remove("active");
+  }
+});
+
+// Standard CSV Export
+document.getElementById("btn-export-csv")?.addEventListener("click", () => {
+  exportMenu?.classList.remove("active");
+  exportToCsv(lastHistory);
+});
+
+// Standard PDF Export
+document.getElementById("btn-export-pdf")?.addEventListener("click", () => {
+  exportMenu?.classList.remove("active");
+  exportToPdf(lastHistory, lastParams);
+});
+
+// Monte-Carlo CSV Export
+document.getElementById("btn-export-mc-csv")?.addEventListener("click", () => {
+  exportMenu?.classList.remove("active");
+  exportMonteCarloToCsv(lastMcResults, lastParams);
+});
+
+// Monte-Carlo PDF Export
+document.getElementById("btn-export-mc-pdf")?.addEventListener("click", () => {
+  exportMenu?.classList.remove("active");
+  exportMonteCarloToPdf(lastMcResults, lastParams);
+});
 
 graphCanvas.addEventListener("mousemove", handleHover);
 graphCanvas.addEventListener("mouseleave", hideTooltip);

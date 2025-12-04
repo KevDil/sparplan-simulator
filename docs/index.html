@@ -35,59 +35,152 @@
       <div class="modal-body">
         <section class="info-section">
           <h3>📊 Standard-Simulation</h3>
-          <p>Die Standard-Simulation berechnet den Vermögensverlauf mit <strong>festen Renditen</strong>:</p>
+          <p>Die Standard-Simulation berechnet den Vermögensverlauf über zwei Phasen mit <strong>festen Renditen</strong>:</p>
+          
+          <h4>Ansparphase</h4>
           <ul>
-            <li><strong>Ansparphase:</strong> Monatliche Einzahlungen auf Tagesgeld und ETF mit dynamischer Erhöhung (Gehaltserhöhung p.a.)</li>
-            <li><strong>Tagesgeld-Ziel:</strong> Überschüsse werden automatisch in ETF umgeschichtet</li>
-            <li><strong>Entnahmephase:</strong> Monatliche Entnahmen nach der 4%-Regel oder festem Betrag</li>
+            <li><strong>Monatliche Einzahlungen:</strong> Separate Sparraten für Tagesgeld und ETF</li>
+            <li><strong>Dynamische Sparraten:</strong> Jährliche Erhöhung um den eingestellten Prozentsatz (z.B. 3% entsprechend Gehaltssteigerungen)</li>
+            <li><strong>Tagesgeld-Ziel:</strong> Sobald das Ziel erreicht ist, fließen weitere TG-Sparraten automatisch in den ETF</li>
+            <li><strong>ETF-Kosten (TER):</strong> Jährliche Fondskosten werden von der Rendite abgezogen</li>
+            <li><strong>Sonderausgaben:</strong> Größere Einmalkosten (z.B. Auto alle 10 Jahre) werden vom Vermögen entnommen</li>
+          </ul>
+          
+          <h4>Entnahmephase</h4>
+          <ul>
+            <li><strong>Zwei Entnahme-Modi:</strong>
+              <ul>
+                <li><em>Fester EUR-Betrag:</em> Monatlich gleichbleibender Netto-Betrag</li>
+                <li><em>Prozent vom Vermögen:</em> Die klassische „X%-Regel" – Entnahme wird einmalig bei Rentenbeginn berechnet</li>
+              </ul>
+            </li>
+            <li><strong>Inflationsanpassung:</strong> Die Entnahme kann jährlich um die Inflation erhöht werden (klassische 4%-Regel)</li>
+            <li><strong>Min/Max-Grenzen:</strong> Begrenzt Entnahmen im %-Modus nach unten und oben</li>
+            <li><strong>Entnahme-Reihenfolge:</strong> Zuerst Überschuss über TG-Ziel, dann ETF-Verkauf, zuletzt TG unter Ziel</li>
           </ul>
         </section>
 
         <section class="info-section">
           <h3>🎲 Monte-Carlo-Simulation</h3>
-          <p>Die Monte-Carlo-Simulation führt <strong>hunderte/tausende Durchläufe</strong> mit zufälligen ETF-Renditen durch:</p>
+          <p>Die Monte-Carlo-Simulation führt <strong>hunderte bis tausende Durchläufe</strong> mit zufälligen ETF-Renditen durch:</p>
           <ul>
-            <li><strong>Renditemodell:</strong> Geometrische Brownsche Bewegung (GBM) mit Normalverteilung</li>
+            <li><strong>Renditemodell:</strong> Geometrische Brownsche Bewegung (GBM) mit Box-Muller-Transformation für normalverteilte Zufallszahlen</li>
             <li><strong>Parameter:</strong> Erwartete Rendite (eingegebene ETF-Rendite) und Volatilität (Standardabweichung)</li>
-            <li><strong>Monatliche Rendite:</strong> <code>r = μ/12 + σ/√12 × Z</code> (Z = Zufallszahl aus Standardnormalverteilung)</li>
+            <li><strong>Monatliche Rendite:</strong> <code>r = (μ + σ²/2)/12 + σ/√12 × Z</code> (Z = Standardnormalverteilung)</li>
+            <li><strong>Volatility-Drag-Korrektur:</strong> Kompensiert den mathematischen Unterschied zwischen arithmetischer und geometrischer Rendite</li>
+            <li><strong>Tagesgeld:</strong> Bleibt deterministisch (keine Schwankungen)</li>
           </ul>
-          <p>Die Ergebnisse zeigen die <strong>Verteilung möglicher Ausgänge</strong> – von Best Case bis Worst Case.</p>
+          <p>Die Ergebnisse zeigen die <strong>Verteilung möglicher Ausgänge</strong> als Konfidenzintervalle (Bänder) im Chart.</p>
         </section>
 
         <section class="info-section">
           <h3>💰 Steuerberechnung (Deutschland)</h3>
+          <p>Die Simulation bildet das deutsche Steuerrecht für Kapitalerträge ab:</p>
           <ul>
-            <li><strong>Kapitalertragsteuer:</strong> 25% auf Gewinne</li>
-            <li><strong>Solidaritätszuschlag:</strong> 5,5% auf KESt</li>
-            <li><strong>Kirchensteuer:</strong> 8% oder 9% (optional, reduziert KESt leicht)</li>
-            <li><strong>Teilfreistellung:</strong> 30% der ETF-Gewinne sind steuerfrei (Aktienfonds)</li>
-            <li><strong>Sparerpauschbetrag:</strong> 1.000€ (Single) / 2.000€ (Verheiratet) steuerfrei pro Jahr</li>
+            <li><strong>Kapitalertragsteuer:</strong> 25% Pauschalsteuer auf Gewinne</li>
+            <li><strong>Solidaritätszuschlag:</strong> 5,5% auf die KESt → Effektiv 26,375% ohne Kirchensteuer</li>
+            <li><strong>Kirchensteuer (optional):</strong> 8% (Bayern/BaWü) oder 9% auf die KESt
+              <ul>
+                <li>Reduziert die KESt leicht durch Sonderausgabenabzug: <code>KESt_eff = 25% / (1 + KiSt-Satz)</code></li>
+                <li>Effektiver Gesamtsatz mit 9% KiSt: ~27,8%</li>
+              </ul>
+            </li>
+            <li><strong>Teilfreistellung (ETF):</strong> Bei Aktienfonds sind 30% der Gewinne steuerfrei → Nur 70% werden besteuert</li>
+            <li><strong>Sparerpauschbetrag:</strong> 1.000€ (Single) / 2.000€ (Verheiratet) bleiben pro Jahr steuerfrei
+              <ul>
+                <li>Gilt für ETF-Gewinne UND Tagesgeldzinsen gemeinsam</li>
+                <li>Wird monatlich verbraucht und jährlich zurückgesetzt</li>
+              </ul>
+            </li>
+            <li><strong>Besteuerung von Tagesgeldzinsen:</strong> Zinsen werden voll besteuert (keine Teilfreistellung)</li>
           </ul>
         </section>
 
         <section class="info-section">
-          <h3>🔄 Depot-Trick (LIFO)</h3>
-          <p>Beim Verkauf werden die <strong>zuletzt gekauften Anteile zuerst verkauft</strong> (Last-In-First-Out). 
-          Diese haben meist geringere Gewinne → weniger Steuern. Umsetzbar durch separate Depots oder Teilübertrag.</p>
+          <h3>🔄 Depot-Trick (LIFO-Prinzip)</h3>
+          <p>Die Simulation nutzt automatisch die <strong>steueroptimierte Verkaufsstrategie</strong>:</p>
+          <ul>
+            <li><strong>LIFO:</strong> Last-In-First-Out – Die zuletzt gekauften Anteile werden zuerst verkauft</li>
+            <li><strong>Vorteil:</strong> Jüngere Anteile haben weniger Kursgewinn → geringere Steuerlast</li>
+            <li><strong>Umsetzung in der Praxis:</strong> Durch separate Depots oder Teilübertrag der ältesten Anteile</li>
+            <li><strong>Lot-Tracking:</strong> Die Simulation verfolgt jeden Kauf (Lot) mit Kaufpreis und Menge separat</li>
+          </ul>
         </section>
 
         <section class="info-section">
-          <h3>📈 Wichtige Kennzahlen</h3>
+          <h3>📅 Sonderausgaben</h3>
+          <p>Größere Einmalkosten können für beide Phasen separat modelliert werden:</p>
           <ul>
-            <li><strong>Erfolgswahrscheinlichkeit:</strong> % der Simulationen, bei denen das Vermögen nicht aufgebraucht wird</li>
+            <li><strong>Intervall:</strong> Alle X Jahre (z.B. alle 10 Jahre ein neues Auto)</li>
+            <li><strong>Inflationsanpassung:</strong> Optional – Sonderausgaben steigen mit der Inflation</li>
+            <li><strong>Entnahme:</strong> Wie reguläre Entnahmen – TG-Überschuss → ETF → TG unter Ziel</li>
+            <li><strong>Statistik-Toggle:</strong> Die Entnahme-Statistiken können mit oder ohne Sonderausgaben angezeigt werden (klickbar)</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>📈 Kennzahlen & Statistiken</h3>
+          
+          <h4>Standard-Simulation</h4>
+          <ul>
+            <li><strong>Endvermögen (nominal/real):</strong> Wert am Ende der Simulation (mit/ohne Inflationsbereinigung)</li>
+            <li><strong>Eingezahlt gesamt:</strong> Startwerte + alle Sparraten über die Ansparphase</li>
+            <li><strong>Rendite gesamt:</strong> Summe aller Kursgewinne und Zinsen</li>
+            <li><strong>Ø Entnahme (nominal/real):</strong> Durchschnittliche monatliche Entnahme (mit/ohne Sonder, klickbar)</li>
+            <li><strong>Effektive Entnahmerate:</strong> Tatsächliche jährliche Entnahme in % des Startvermögens bei Rentenbeginn</li>
+            <li><strong>Steuern gesamt:</strong> Alle gezahlten Kapitalertragsteuern über die Laufzeit</li>
+          </ul>
+          
+          <h4>Monte-Carlo-Simulation</h4>
+          <ul>
+            <li><strong>Erfolgswahrscheinlichkeit:</strong> % der Simulationen, wo Vermögen > 100€ am Ende</li>
             <li><strong>Kapitalerhalt:</strong> % der Fälle, wo Endvermögen ≥ Vermögen bei Rentenbeginn</li>
-            <li><strong>Pleite-Risiko:</strong> % der Fälle, wo Vermögen unter 10.000€ fällt</li>
-            <li><strong>Perzentile:</strong> 5%/25%/50%/75%/95% zeigen die Verteilung der Ergebnisse</li>
+            <li><strong>Pleite-Risiko:</strong> % der Fälle, wo Vermögen jemals unter 10.000€ fällt</li>
+            <li><strong>Perzentile (5/10/25/50/75/90/95%):</strong> Zeigen die Verteilung – Median (50%) ist der „typische" Verlauf</li>
+            <li><strong>Vermögen bei Rentenbeginn:</strong> Median + real – Startwert für die Entnahmephase</li>
           </ul>
         </section>
 
         <section class="info-section">
-          <h3>⚠️ Hinweise</h3>
+          <h3>📉 Inflationsbereinigung</h3>
+          <p>Alle Vermögenswerte werden auch <strong>inflationsbereinigt (real)</strong> angezeigt:</p>
           <ul>
-            <li>Die Simulation ist eine <strong>Schätzung</strong>, keine Garantie</li>
-            <li>Historische Renditen sind keine Garantie für zukünftige Ergebnisse</li>
-            <li>Volatilität von 15-20% ist typisch für globale Aktien-ETFs</li>
-            <li>Die 4%-Regel basiert auf historischen US-Daten (Trinity-Studie)</li>
+            <li><strong>Kaufkraft:</strong> Zeigt, wie viel das Vermögen in „heutigen Euro" wert ist</li>
+            <li><strong>Berechnung:</strong> Nominaler Wert ÷ kumulierte Inflation</li>
+            <li><strong>Wichtig:</strong> Bei langen Zeiträumen (30+ Jahre) kann die Kaufkraft deutlich geringer sein als der nominale Wert</li>
+            <li><strong>Chart:</strong> Grüne Linie zeigt inflationsbereinigtes Vermögen im Standard-Chart</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🔧 Weitere Funktionen</h3>
+          <ul>
+            <li><strong>Jahresübersicht:</strong> Tab mit aggregierten Werten pro Jahr (TG, ETF, Rendite, Entnahmen, Steuern)</li>
+            <li><strong>Export-Optionen:</strong> Über das Dropdown-Menü „Export" verfügbar:
+              <ul>
+                <li><em>Standard CSV:</em> Alle Monatsdaten + Eingaben</li>
+                <li><em>Standard PDF:</em> Chart, Parameter, Statistiken und Jahresübersicht</li>
+                <li><em>Monte-Carlo CSV:</em> Zusammenfassung + Perzentile pro Monat</li>
+                <li><em>Monte-Carlo PDF:</em> Chart, Erfolgswahrscheinlichkeit, Statistiken und Perzentil-Tabelle</li>
+              </ul>
+            </li>
+            <li><strong>Log/Linear-Skala:</strong> Chart-Achse umschaltbar für bessere Lesbarkeit bei großen Werteunterschieden</li>
+            <li><strong>Hover-Tooltips:</strong> Detailwerte beim Überfahren der Charts mit der Maus</li>
+            <li><strong>Eingaben speichern:</strong> Werte werden automatisch im Browser gespeichert</li>
+            <li><strong>Zurücksetzen:</strong> Setzt alle Eingaben auf Standardwerte zurück</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>⚠️ Hinweise & Annahmen</h3>
+          <ul>
+            <li><strong>Simulation ≠ Vorhersage:</strong> Die Ergebnisse sind Schätzungen basierend auf den Eingaben</li>
+            <li><strong>Keine Garantie:</strong> Historische Renditen garantieren keine zukünftigen Ergebnisse</li>
+            <li><strong>Volatilität:</strong> 15-20% p.a. ist typisch für globale Aktien-ETFs (z.B. MSCI World)</li>
+            <li><strong>4%-Regel:</strong> Basiert auf der Trinity-Studie (US-Daten 1926-1995) – 4% Erstentnahme, inflationsangepasst</li>
+            <li><strong>TER:</strong> Wird monatlich von der ETF-Rendite abgezogen (nicht vom Vermögen)</li>
+            <li><strong>Steuerrecht:</strong> Deutsches Recht 2024 – Änderungen vorbehalten</li>
+            <li><strong>Kirchensteuer:</strong> Wird automatisch von der Bank abgeführt (Kapitalertragsteuer-Abzugsverfahren)</li>
           </ul>
         </section>
       </div>
@@ -264,7 +357,23 @@
           <button type="button" id="btn-monte-carlo" class="btn btn--accent">Monte-Carlo starten</button>
           <div class="btn-group">
             <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
-            <button type="button" id="btn-export" class="btn btn--secondary">CSV Export</button>
+            <div class="export-dropdown">
+              <button type="button" class="btn btn--secondary" id="btn-export-toggle">
+                Export ▾
+              </button>
+              <div class="export-menu" id="export-menu">
+                <div class="export-menu-section">
+                  <span class="export-menu-title">Standard-Simulation</span>
+                  <button type="button" class="export-menu-item" id="btn-export-csv">CSV exportieren</button>
+                  <button type="button" class="export-menu-item" id="btn-export-pdf">PDF exportieren</button>
+                </div>
+                <div class="export-menu-section">
+                  <span class="export-menu-title">Monte-Carlo-Simulation</span>
+                  <button type="button" class="export-menu-item" id="btn-export-mc-csv">CSV exportieren</button>
+                  <button type="button" class="export-menu-item" id="btn-export-mc-pdf">PDF exportieren</button>
+                </div>
+              </div>
+            </div>
           </div>
           <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick" (jüngste Anteile zuerst) für geringere Steuerlast. Tagesgeldzinsen werden ebenfalls besteuert.</p>
         </div>
@@ -558,6 +667,8 @@
 
   <div id="tooltip" class="tooltip" aria-hidden="true"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
