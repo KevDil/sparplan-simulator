@@ -37,6 +37,7 @@ let graphState = null;
 let lastHistory = [];
 let lastParams = null;
 let includeSpecialWithdrawals = false; // Toggle: Sonderausgaben in Statistik einbeziehen
+let stdUseLogScale = false; // Standard: lineare Skala für Standard-Chart
 
 // ============ UTILITY FUNCTIONS ============
 
@@ -761,7 +762,7 @@ function renderGraph(history) {
   const width = graphCanvas.clientWidth || graphCanvas.parentElement.clientWidth || 800;
   const height = graphCanvas.clientHeight || 320;
   
-  // HiDPI-Fix: Canvas-Gr\u00f6\u00dfe und CSS-Gr\u00f6\u00dfe korrekt setzen
+  // HiDPI-Fix: Canvas-Größe und CSS-Größe korrekt setzen
   graphCanvas.width = width * dpr;
   graphCanvas.height = height * dpr;
   graphCanvas.style.width = `${width}px`;
@@ -778,14 +779,35 @@ function renderGraph(history) {
   const padY = 50;
   const totals = history.map(r => r.total);
   const totalsReal = history.map(r => r.total_real ?? r.total);
-  const maxVal = Math.max(1, ...totals, ...totalsReal);
   const xDenom = Math.max(history.length - 1, 1);
-
-  const toXY = (idx, val) => {
-    const x = padX + (idx / xDenom) * (width - 2 * padX);
-    const y = height - padY - (val / maxVal) * (height - 2 * padY);
-    return [x, y];
-  };
+  
+  // Min/Max für beide Skalierungen
+  const minVal = Math.max(1000, Math.min(...totals.filter(v => v > 0), ...totalsReal.filter(v => v > 0)));
+  const maxVal = Math.max(minVal * 10, ...totals, ...totalsReal);
+  
+  let toXY;
+  
+  if (stdUseLogScale) {
+    // Logarithmische Skala
+    const logMin = Math.log10(minVal);
+    const logMax = Math.log10(maxVal);
+    
+    toXY = (idx, val) => {
+      const x = padX + (idx / xDenom) * (width - 2 * padX);
+      const clampedVal = Math.max(minVal, val);
+      const logVal = Math.log10(clampedVal);
+      const yNorm = (logVal - logMin) / (logMax - logMin);
+      const y = height - padY - yNorm * (height - 2 * padY);
+      return [x, y];
+    };
+  } else {
+    // Lineare Skala
+    toXY = (idx, val) => {
+      const x = padX + (idx / xDenom) * (width - 2 * padX);
+      const y = height - padY - (val / maxVal) * (height - 2 * padY);
+      return [x, y];
+    };
+  }
 
   // Achsen
   ctx.strokeStyle = "#8b96a9";
@@ -802,15 +824,43 @@ function renderGraph(history) {
   ctx.fillStyle = "#94a3b8";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  for (let i = 0; i <= Y_AXIS_STEPS; i += 1) {
-    const val = maxVal * (i / Y_AXIS_STEPS);
-    const [, y] = toXY(0, val);
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
-    ctx.beginPath();
-    ctx.moveTo(padX, y);
-    ctx.lineTo(width - padX, y);
-    ctx.stroke();
-    ctx.fillText(`${Math.round(val / 1000)}k`, padX - 8, y);
+  
+  if (stdUseLogScale) {
+    // Logarithmische Schritte
+    const logMin = Math.log10(minVal);
+    const logSteps = [];
+    let step = Math.pow(10, Math.floor(logMin));
+    while (step <= maxVal) {
+      if (step >= minVal) logSteps.push(step);
+      if (step * 2 >= minVal && step * 2 <= maxVal) logSteps.push(step * 2);
+      if (step * 5 >= minVal && step * 5 <= maxVal) logSteps.push(step * 5);
+      step *= 10;
+    }
+    
+    for (const val of logSteps) {
+      const [, y] = toXY(0, val);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padX, y);
+      ctx.lineTo(width - padX, y);
+      ctx.stroke();
+      ctx.fillStyle = "#94a3b8";
+      const label = val >= 1000000 ? `${(val / 1000000).toFixed(val % 1000000 === 0 ? 0 : 1)}M` : `${Math.round(val / 1000)}k`;
+      ctx.fillText(label, padX - 8, y);
+    }
+  } else {
+    // Lineare Schritte
+    for (let i = 0; i <= Y_AXIS_STEPS; i += 1) {
+      const val = maxVal * (i / Y_AXIS_STEPS);
+      const [, y] = toXY(0, val);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padX, y);
+      ctx.lineTo(width - padX, y);
+      ctx.stroke();
+      const label = val >= 1000000 ? `${(val / 1000000).toFixed(1)}M` : `${Math.round(val / 1000)}k`;
+      ctx.fillText(label, padX - 8, y);
+    }
   }
 
   // X Labels (Jahre)
@@ -969,10 +1019,18 @@ form.addEventListener("submit", (e) => {
 
     lastHistory = simulate(params);
     lastParams = params;
-    renderGraph(lastHistory);
-    renderTable(lastHistory);
-    renderStats(lastHistory, params);
-    updateRentFields(lastHistory, mode);
+    
+    // Wechsle zum Standard-Tab
+    switchToTab("standard");
+    
+    // Kurze Verzögerung für korrektes Canvas-Sizing nach Tab-Wechsel
+    setTimeout(() => {
+      renderGraph(lastHistory);
+      renderTable(lastHistory);
+      renderStats(lastHistory, params);
+      updateRentFields(lastHistory, mode);
+    }, 20);
+    
     saveToStorage(params);
     messageEl.textContent = "Simulation aktualisiert.";
   } catch (err) {
@@ -997,7 +1055,27 @@ window.addEventListener("resize", () => {
   if (lastHistory.length) renderGraph(lastHistory);
 });
 
-// Toggle f\u00fcr Entnahme-Statistiken (mit/ohne Sonderausgaben)
+// Log/Linear Toggle für Standard Graph
+const btnStdLog = document.getElementById("btn-std-log");
+const btnStdLinear = document.getElementById("btn-std-linear");
+
+btnStdLog?.addEventListener("click", () => {
+  if (stdUseLogScale) return;
+  stdUseLogScale = true;
+  btnStdLog.classList.add("btn-scale--active");
+  btnStdLinear.classList.remove("btn-scale--active");
+  if (lastHistory.length) renderGraph(lastHistory);
+});
+
+btnStdLinear?.addEventListener("click", () => {
+  if (!stdUseLogScale) return;
+  stdUseLogScale = false;
+  btnStdLinear.classList.add("btn-scale--active");
+  btnStdLog.classList.remove("btn-scale--active");
+  if (lastHistory.length) renderGraph(lastHistory);
+});
+
+// Toggle für Entnahme-Statistiken (mit/ohne Sonderausgaben)
 function toggleWithdrawalStats() {
   includeSpecialWithdrawals = !includeSpecialWithdrawals;
   if (lastHistory.length && lastParams) {
