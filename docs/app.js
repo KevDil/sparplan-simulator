@@ -3239,7 +3239,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
     // Params für Export speichern
     lastParams = params;
     
-    const iterations = readNumber("mc_iterations", { min: 100, max: 10000 });
+    const iterations = readNumber("mc_iterations", { min: 100, max: 100000 });
     const volatility = readNumber("mc_volatility", { min: 1, max: 50 });
     const showIndividual = document.getElementById("mc_show_individual")?.checked || false;
     
