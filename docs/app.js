@@ -2090,6 +2090,11 @@ form.addEventListener("submit", (e) => {
     const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
     const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
     const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+    const countdownEnabled = document.getElementById("special_savings_countdown_enabled")?.checked ?? false;
+    if (countdownEnabled) {
+      const monthsEl = document.getElementById("special_savings_countdown_months");
+      if (monthsEl) monthsEl.value = calculateOptimalCountdownMonths();
+    }
     
     // Validierte Parameter mit Grenzen
     const params = {
@@ -2156,7 +2161,7 @@ form.querySelectorAll('input[name="rent_mode"]').forEach(radio => {
   radio.addEventListener("change", updateRentModeFields);
 });
 
-document.getElementById("special_savings_countdown_enabled")?.addEventListener("change", () => updateSpecialSavingsCountdownFields(true));
+document.getElementById("special_savings_countdown_enabled")?.addEventListener("change", () => updateSpecialSavingsCountdownFields(false));
 
 // Reset-Button
 document.getElementById("btn-reset")?.addEventListener("click", resetToDefaults);
@@ -3280,6 +3285,11 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
     const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
     const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
     const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+    const countdownEnabled = document.getElementById("special_savings_countdown_enabled")?.checked ?? false;
+    if (countdownEnabled) {
+      const monthsEl = document.getElementById("special_savings_countdown_months");
+      if (monthsEl) monthsEl.value = calculateOptimalCountdownMonths();
+    }
     
     const params = {
       start_savings: readNumber("start_savings", { min: 0 }),
@@ -3302,6 +3312,8 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       special_payout_net_savings: readNumber("special_savings", { min: 0 }),
       special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
       inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+      special_savings_countdown_enabled: countdownEnabled,
+      special_savings_countdown_months: readNumber("special_savings_countdown_months", { min: 1, max: 240 }),
       special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
       special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
       inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
