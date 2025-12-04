@@ -1185,7 +1185,11 @@ function simulateStochastic(params, annualVolatility) {
     }
 
     // Stochastische ETF-Rendite (Geometrische Brownsche Bewegung)
-    const monthlyEtfReturn = randomNormal(monthlyEtfMean, monthlyVolatility);
+    // Korrektur für Volatility Drag: drift = μ - σ²/2, damit E[S_t] = S_0 * e^(μt)
+    // Bei einfacher Addition r ~ N(μ, σ) wäre der Median niedriger als erwartet
+    const volatilityDragCorrection = (monthlyVolatility * monthlyVolatility) / 2;
+    const adjustedMean = monthlyEtfMean + volatilityDragCorrection;
+    const monthlyEtfReturn = randomNormal(adjustedMean, monthlyVolatility);
     currentEtfPrice *= (1 + monthlyEtfReturn);
     
     // Verhindere negative Preise
