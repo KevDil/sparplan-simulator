@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sparplan & Entnahme Simulator (Web)</title>
+  <title>Sparplan & Entnahme Simulator</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -22,7 +22,6 @@
       </svg>
       Wie funktioniert's?
     </button>
-    <p class="tagline">Steuer-optimiert mit Depot-Trick, Sonderausgaben & dynamischen Sparraten.</p>
   </header>
 
   <!-- Info Modal -->
@@ -106,13 +105,13 @@
         </section>
 
         <section class="info-section">
-          <h3>🔄 Depot-Trick (LIFO-Prinzip)</h3>
-          <p>Die Simulation nutzt automatisch die <strong>steueroptimierte Verkaufsstrategie</strong>:</p>
+          <h3>🔄 FIFO vs. LIFO (Verkaufsreihenfolge)</h3>
+          <p>Die Simulation unterstützt beide Verkaufsstrategien:</p>
           <ul>
-            <li><strong>LIFO:</strong> Last-In-First-Out – Die zuletzt gekauften Anteile werden zuerst verkauft</li>
-            <li><strong>Vorteil:</strong> Jüngere Anteile haben weniger Kursgewinn → geringere Steuerlast</li>
-            <li><strong>Umsetzung in der Praxis:</strong> Durch separate Depots oder Teilübertrag der ältesten Anteile</li>
-            <li><strong>Lot-Tracking:</strong> Die Simulation verfolgt jeden Kauf (Lot) mit Kaufpreis und Menge separat</li>
+            <li><strong>FIFO (Standard):</strong> First-In-First-Out – Älteste Anteile werden zuerst verkauft. Steuerrechtlich vorgeschrieben in Deutschland.</li>
+            <li><strong>LIFO (optional):</strong> Last-In-First-Out – Jüngste Anteile zuerst. Oft steuerlich günstiger, da weniger Kursgewinn.</li>
+            <li><strong>Umsetzung LIFO:</strong> In der Praxis durch separate Depots oder Teilübertrag der ältesten Anteile realisierbar.</li>
+            <li><strong>Lot-Tracking:</strong> Die Simulation verfolgt jeden Kauf (Lot) mit Kaufpreis und Menge separat.</li>
           </ul>
         </section>
 
@@ -124,6 +123,17 @@
             <li><strong>Inflationsanpassung:</strong> Optional – Sonderausgaben steigen mit der Inflation</li>
             <li><strong>Entnahme:</strong> Wie reguläre Entnahmen – TG-Überschuss → ETF → TG unter Ziel</li>
             <li><strong>Statistik-Toggle:</strong> Die Entnahme-Statistiken können mit oder ohne Sonderausgaben angezeigt werden (klickbar)</li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🛡️ Kapitalerhalt-Modus</h3>
+          <p>Automatische Entnahme-Reduktion bei Vermögensrückgang:</p>
+          <ul>
+            <li><strong>Schwellwert:</strong> Fällt das Vermögen unter X% des Startvermögens bei Rentenbeginn, wird die Entnahme reduziert.</li>
+            <li><strong>Reduktion:</strong> Entnahme wird um den eingestellten Prozentsatz verringert (z.B. 25%).</li>
+            <li><strong>Hysterese:</strong> Volle Entnahme erst wieder, wenn Vermögen über Schwelle + Erholungspuffer liegt.</li>
+            <li><strong>Ziel:</strong> Verhindert, dass in Crashphasen zu viele Anteile zu niedrigen Kursen verkauft werden.</li>
           </ul>
         </section>
 
@@ -215,7 +225,7 @@
             <li><strong>Volatilität:</strong> 15-20% p.a. ist typisch für globale Aktien-ETFs (z.B. MSCI World)</li>
             <li><strong>4%-Regel:</strong> Basiert auf der Trinity-Studie (US-Daten 1926-1995) – 4% Erstentnahme, inflationsangepasst</li>
             <li><strong>TER:</strong> Wird monatlich von der ETF-Rendite abgezogen (nicht vom Vermögen)</li>
-            <li><strong>Steuerrecht:</strong> Deutsches Recht 2024 – Änderungen vorbehalten</li>
+            <li><strong>Steuerrecht:</strong> Deutsches Recht 2025 – Änderungen vorbehalten</li>
             <li><strong>Kirchensteuer:</strong> Wird automatisch von der Bank abgeführt (Kapitalertragsteuer-Abzugsverfahren)</li>
           </ul>
         </section>
@@ -460,7 +470,6 @@
               </div>
             </div>
           </div>
-          <p class="hint">Hinweis: Simulation nutzt automatisch den „Depot-Trick" (jüngste Anteile zuerst) für geringere Steuerlast. Tagesgeldzinsen werden ebenfalls besteuert.</p>
         </div>
         <div id="message" class="message" role="alert" aria-live="polite"></div>
       </form>
