@@ -3317,15 +3317,6 @@ function renderMonteCarloGraph(results) {
     ctx.fillText("Entnahme →", sx - 6, padY + 20);
   }
   
-  // Hinweis bei Log-Skala mit Null-Szenarien
-  if (effectiveLogScale && hasZeroScenarios) {
-    ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
-    ctx.font = "bold 11px 'Segoe UI', sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "bottom";
-    ctx.fillText("⚠ P5/P10 enthält 0€ (als " + LOG_FLOOR + "€ dargestellt)", padX + 10, height - padY - 8);
-  }
-  
   mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
 }
 
