@@ -3118,7 +3118,7 @@ function renderMonteCarloGraph(results) {
   const effectiveLogScale = mcUseLogScale;
   
   // Bei Log-Skala: Minimalwert für Darstellung (Nullen werden hierauf geklemmt)
-  const LOG_FLOOR = 100; // 100€ als Boden für Log-Skala
+  const LOG_FLOOR = 1; // 1€ als Boden für Log-Skala
   
   // Min/Max für beide Skalierungen
   const positiveP5 = activePercentiles.p5.filter(v => v > 0);
