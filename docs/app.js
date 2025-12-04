@@ -1094,6 +1094,7 @@ const mcBadgeEl = document.getElementById("mc-badge");
 
 let mcGraphState = null;
 let lastMcResults = null;
+let mcUseLogScale = true; // Standard: logarithmische Skala
 
 // Box-Muller Transform für Normalverteilung
 function randomNormal(mean = 0, stdDev = 1) {
@@ -1602,22 +1603,35 @@ function renderMonteCarloGraph(results) {
   
   const padX = 60;
   const padY = 50;
-  
-  // Logarithmische Skala für bessere Lesbarkeit
-  const minVal = Math.max(1000, Math.min(...percentiles.p5.filter(v => v > 0))); // Minimum 1k
-  const maxVal = Math.max(minVal * 10, ...percentiles.p95);
-  const logMin = Math.log10(minVal);
-  const logMax = Math.log10(maxVal);
   const xDenom = Math.max(months.length - 1, 1);
   
-  const toXY = (idx, val) => {
-    const x = padX + (idx / xDenom) * (width - 2 * padX);
-    const clampedVal = Math.max(minVal, val);
-    const logVal = Math.log10(clampedVal);
-    const yNorm = (logVal - logMin) / (logMax - logMin);
-    const y = height - padY - yNorm * (height - 2 * padY);
-    return [x, y];
-  };
+  // Min/Max für beide Skalierungen
+  const minVal = Math.max(1000, Math.min(...percentiles.p5.filter(v => v > 0)));
+  const maxVal = Math.max(minVal * 10, ...percentiles.p95);
+  
+  let toXY;
+  
+  if (mcUseLogScale) {
+    // Logarithmische Skala
+    const logMin = Math.log10(minVal);
+    const logMax = Math.log10(maxVal);
+    
+    toXY = (idx, val) => {
+      const x = padX + (idx / xDenom) * (width - 2 * padX);
+      const clampedVal = Math.max(minVal, val);
+      const logVal = Math.log10(clampedVal);
+      const yNorm = (logVal - logMin) / (logMax - logMin);
+      const y = height - padY - yNorm * (height - 2 * padY);
+      return [x, y];
+    };
+  } else {
+    // Lineare Skala
+    toXY = (idx, val) => {
+      const x = padX + (idx / xDenom) * (width - 2 * padX);
+      const y = height - padY - (val / maxVal) * (height - 2 * padY);
+      return [x, y];
+    };
+  }
   
   // Achsen
   ctx.strokeStyle = "#8b96a9";
@@ -1629,32 +1643,49 @@ function renderMonteCarloGraph(results) {
   ctx.lineTo(padX, padY);
   ctx.stroke();
   
-  // Y Hilfslinien (logarithmisch: 1k, 10k, 100k, 1M, 10M, etc.)
+  // Y Hilfslinien
   ctx.font = "12px 'Segoe UI', sans-serif";
   ctx.fillStyle = "#94a3b8";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   
-  const logSteps = [];
-  let step = Math.pow(10, Math.floor(logMin));
-  while (step <= maxVal) {
-    if (step >= minVal) logSteps.push(step);
-    // Zwischenschritte für bessere Granularität
-    if (step * 2 >= minVal && step * 2 <= maxVal) logSteps.push(step * 2);
-    if (step * 5 >= minVal && step * 5 <= maxVal) logSteps.push(step * 5);
-    step *= 10;
-  }
-  
-  for (const val of logSteps) {
-    const [, y] = toXY(0, val);
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
-    ctx.beginPath();
-    ctx.moveTo(padX, y);
-    ctx.lineTo(width - padX, y);
-    ctx.stroke();
-    ctx.fillStyle = "#94a3b8";
-    const label = val >= 1000000 ? `${(val / 1000000).toFixed(val % 1000000 === 0 ? 0 : 1)}M` : `${Math.round(val / 1000)}k`;
-    ctx.fillText(label, padX - 8, y);
+  if (mcUseLogScale) {
+    // Logarithmische Schritte
+    const logMin = Math.log10(minVal);
+    const logSteps = [];
+    let step = Math.pow(10, Math.floor(logMin));
+    while (step <= maxVal) {
+      if (step >= minVal) logSteps.push(step);
+      if (step * 2 >= minVal && step * 2 <= maxVal) logSteps.push(step * 2);
+      if (step * 5 >= minVal && step * 5 <= maxVal) logSteps.push(step * 5);
+      step *= 10;
+    }
+    
+    for (const val of logSteps) {
+      const [, y] = toXY(0, val);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padX, y);
+      ctx.lineTo(width - padX, y);
+      ctx.stroke();
+      ctx.fillStyle = "#94a3b8";
+      const label = val >= 1000000 ? `${(val / 1000000).toFixed(val % 1000000 === 0 ? 0 : 1)}M` : `${Math.round(val / 1000)}k`;
+      ctx.fillText(label, padX - 8, y);
+    }
+  } else {
+    // Lineare Schritte
+    for (let i = 0; i <= Y_AXIS_STEPS; i++) {
+      const val = maxVal * (i / Y_AXIS_STEPS);
+      const [, y] = toXY(0, val);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padX, y);
+      ctx.lineTo(width - padX, y);
+      ctx.stroke();
+      ctx.fillStyle = "#94a3b8";
+      const label = val >= 1000000 ? `${(val / 1000000).toFixed(1)}M` : `${Math.round(val / 1000)}k`;
+      ctx.fillText(label, padX - 8, y);
+    }
   }
   
   // X Labels (Jahre)
@@ -1838,6 +1869,26 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
 
 // Resize Handler für MC Graph
 window.addEventListener("resize", () => {
+  if (lastMcResults) renderMonteCarloGraph(lastMcResults);
+});
+
+// Log/Linear Toggle für MC Graph
+const btnMcLog = document.getElementById("btn-mc-log");
+const btnMcLinear = document.getElementById("btn-mc-linear");
+
+btnMcLog?.addEventListener("click", () => {
+  if (mcUseLogScale) return;
+  mcUseLogScale = true;
+  btnMcLog.classList.add("btn-scale--active");
+  btnMcLinear.classList.remove("btn-scale--active");
+  if (lastMcResults) renderMonteCarloGraph(lastMcResults);
+});
+
+btnMcLinear?.addEventListener("click", () => {
+  if (!mcUseLogScale) return;
+  mcUseLogScale = false;
+  btnMcLinear.classList.add("btn-scale--active");
+  btnMcLog.classList.remove("btn-scale--active");
   if (lastMcResults) renderMonteCarloGraph(lastMcResults);
 });
 

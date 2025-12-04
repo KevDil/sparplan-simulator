@@ -428,12 +428,12 @@
           <div class="mc-stats-section">
             <h4 class="mc-stats-title">Inflationsbereinigt (real)</h4>
             <div class="stats-grid stats-grid--mc">
-              <div class="stat-card stat-card--mc stat-card--real">
+              <div class="stat-card stat-card--mc">
                 <span class="stat-label">Endvermögen (Median)</span>
                 <span class="stat-value stat-value--highlight" id="mc-median-end-real">-</span>
                 <small class="stat-hint">50% Perzentil in heutiger Kaufkraft</small>
               </div>
-              <div class="stat-card stat-card--mc stat-card--real">
+              <div class="stat-card stat-card--mc">
                 <span class="stat-label">Endvermögen (10%-90%)</span>
                 <span class="stat-value stat-value--highlight" id="mc-range-end-real">-</span>
                 <small class="stat-hint">80% Konfidenzintervall</small>
@@ -457,13 +457,21 @@
                 <p class="eyebrow">Fan-Chart</p>
                 <h2>Vermögensverteilung über Zeit</h2>
               </div>
-              <div class="legend legend--wrap">
-                <span class="legend__item"><span class="dot dot--mc-median"></span>Median (50%)</span>
-                <span class="legend__item"><span class="dot dot--mc-50"></span>25%-75%</span>
-                <span class="legend__item"><span class="dot dot--mc-80"></span>10%-90%</span>
-                <span class="legend__item"><span class="dot dot--mc-p5"></span>5% (Worst)</span>
-                <span class="legend__item"><span class="dot dot--mc-p95"></span>95% (Best)</span>
+              <div class="chart-controls">
+                <button type="button" class="btn-scale btn-scale--active" id="btn-mc-log" title="Logarithmische Skala">
+                  Log
+                </button>
+                <button type="button" class="btn-scale" id="btn-mc-linear" title="Lineare Skala">
+                  Linear
+                </button>
               </div>
+            </div>
+            <div class="mc-legend">
+              <span class="legend__item"><span class="dot dot--mc-median"></span>Median (50%)</span>
+              <span class="legend__item"><span class="dot dot--mc-50"></span>25%-75%</span>
+              <span class="legend__item"><span class="dot dot--mc-80"></span>10%-90%</span>
+              <span class="legend__item"><span class="dot dot--mc-p5"></span>5% (Worst)</span>
+              <span class="legend__item"><span class="dot dot--mc-p95"></span>95% (Best)</span>
             </div>
             <div class="graph-wrapper">
               <canvas id="mc-graph" aria-label="Monte-Carlo Vermögensgraph"></canvas>
