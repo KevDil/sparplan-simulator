@@ -416,10 +416,11 @@ function simulate(params) {
         }
       }
 
-      // Inflationsanpassung der Entnahme (bei EUR-Modus)
+      // Inflationsanpassung der Entnahme (für beide Modi: EUR und Prozent)
+      // Die 4%-Regel: X% vom Startvermögen, dann jährlich um Inflation erhöhen
       let currentPayout = payoutValue || 0;
-      if (inflation_adjust_withdrawal && monthly_payout_net != null && basePayoutValue != null) {
-        // Entnahme jährlich um Inflation erhöhen
+      if (inflation_adjust_withdrawal && basePayoutValue != null) {
+        // Entnahme jährlich um Inflation erhöhen (gilt für EUR UND Prozent-Modus)
         const withdrawalYearIdx = yearIdx - savings_years;
         currentPayout = basePayoutValue * Math.pow(1 + inflation_rate_pa / 100, withdrawalYearIdx);
       }
