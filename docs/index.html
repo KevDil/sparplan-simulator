@@ -44,6 +44,10 @@
               <input type="number" step="0.1" id="etf_rate" value="6.0">
             </label>
             <label class="field">
+              <span>ETF Kosten (TER) p.a. (%)</span>
+              <input type="number" step="0.01" id="etf_ter" value="0.2">
+            </label>
+            <label class="field">
               <span>Tagesgeld-Ziel (EUR)</span>
               <input type="number" step="100" id="savings_target" value="5000">
             </label>
@@ -113,6 +117,18 @@
               <input type="number" step="0.1" id="rent_percent" value="4.0">
             </label>
             <label class="field">
+              <span>Entnahme-Untergrenze (EUR/Monat)</span>
+              <input type="number" step="50" id="withdrawal_min" value="0">
+            </label>
+            <label class="field">
+              <span>Entnahme-Obergrenze (EUR/Monat)</span>
+              <input type="number" step="50" id="withdrawal_max" value="0">
+            </label>
+            <label class="field field--checkbox">
+              <input type="checkbox" id="inflation_adjust_withdrawal" checked>
+              <span>Entnahme inflationsanpassen (bei EUR-Modus)</span>
+            </label>
+            <label class="field">
               <span>Sonderausgabe Entnahme (EUR)</span>
               <input type="number" step="500" id="special_withdraw" value="15000">
             </label>
@@ -173,6 +189,49 @@
           </thead>
           <tbody></tbody>
         </table>
+      </div>
+
+      <div class="result-header">
+        <div>
+          <p class="eyebrow">Zusammenfassung</p>
+          <h2>Simulationsergebnisse</h2>
+        </div>
+      </div>
+      <div id="stats-panel" class="stats-panel">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">Endvermögen (nominal)</span>
+            <span class="stat-value" id="stat-end-nominal">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Endvermögen (real)</span>
+            <span class="stat-value" id="stat-end-real">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Eingezahlt gesamt</span>
+            <span class="stat-value" id="stat-total-invested">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Rendite gesamt</span>
+            <span class="stat-value" id="stat-total-return">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Ø Entnahme/Monat</span>
+            <span class="stat-value" id="stat-avg-withdrawal">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Min/Max Entnahme</span>
+            <span class="stat-value" id="stat-minmax-withdrawal">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Steuern gesamt</span>
+            <span class="stat-value" id="stat-total-tax">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Effektive Entnahmerate</span>
+            <span class="stat-value" id="stat-effective-rate">-</span>
+          </div>
+        </div>
       </div>
     </section>
   </main>

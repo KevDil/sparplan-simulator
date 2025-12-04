@@ -71,6 +71,7 @@ function applyStoredValues() {
     start_etf: "start_etf",
     savings_rate_pa: "savings_rate",
     etf_rate_pa: "etf_rate",
+    etf_ter_pa: "etf_ter",
     savings_target: "savings_target",
     savings_years: "years_save",
     monthly_savings: "monthly_savings",
@@ -81,10 +82,18 @@ function applyStoredValues() {
     withdrawal_years: "years_withdraw",
     monthly_payout_net: "rent_eur",
     monthly_payout_percent: "rent_percent",
+    withdrawal_min: "withdrawal_min",
+    withdrawal_max: "withdrawal_max",
     special_payout_net_withdrawal: "special_withdraw",
     special_interval_years_withdrawal: "special_withdraw_interval",
     inflation_rate_pa: "inflation_rate",
   };
+  
+  // Checkbox separat behandeln
+  const inflationCheckbox = document.getElementById("inflation_adjust_withdrawal");
+  if (inflationCheckbox && stored.inflation_adjust_withdrawal != null) {
+    inflationCheckbox.checked = stored.inflation_adjust_withdrawal;
+  }
   
   for (const [paramKey, inputId] of Object.entries(fieldMap)) {
     const el = document.getElementById(inputId);
@@ -105,6 +114,7 @@ function getDefaultValues() {
     start_etf: 100,
     savings_rate: 3.0,
     etf_rate: 6.0,
+    etf_ter: 0.2,
     savings_target: 5000,
     years_save: 36,
     monthly_savings: 100,
@@ -115,6 +125,9 @@ function getDefaultValues() {
     years_withdraw: 30,
     rent_eur: 1000,
     rent_percent: 4.0,
+    withdrawal_min: 0,
+    withdrawal_max: 0,
+    inflation_adjust_withdrawal: true,
     special_withdraw: 15000,
     special_withdraw_interval: 10,
     inflation_rate: 2.0,
@@ -125,7 +138,13 @@ function resetToDefaults() {
   const defaults = getDefaultValues();
   for (const [id, val] of Object.entries(defaults)) {
     const el = document.getElementById(id);
-    if (el) el.value = val;
+    if (el) {
+      if (el.type === "checkbox") {
+        el.checked = val;
+      } else {
+        el.value = val;
+      }
+    }
   }
   const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
   if (eurRadio) eurRadio.checked = true;
@@ -241,12 +260,16 @@ function simulate(params) {
     monthly_etf,
     savings_rate_pa,
     etf_rate_pa,
+    etf_ter_pa = 0,
     savings_target,
     annual_raise_percent,
     savings_years,
     withdrawal_years,
     monthly_payout_net,
     monthly_payout_percent,
+    withdrawal_min = 0,
+    withdrawal_max = 0,
+    inflation_adjust_withdrawal = true,
     special_payout_net_savings,
     special_interval_years_savings,
     special_payout_net_withdrawal,
@@ -263,8 +286,11 @@ function simulate(params) {
     etfLots.push({ amount: start_etf / currentEtfPrice, price: currentEtfPrice, monthIdx: 0 });
   }
 
+  // ETF-Rendite nach Abzug der TER
+  const effectiveEtfRate = etf_rate_pa - etf_ter_pa;
+  
   const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
-  const monthlyEtfRate = toMonthlyRate(etf_rate_pa);
+  const monthlyEtfRate = toMonthlyRate(effectiveEtfRate);
   const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
   const annualRaise = annual_raise_percent / 100;
   const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
@@ -276,6 +302,7 @@ function simulate(params) {
   let payoutValue = monthly_payout_net;
   let payoutPercentPa = monthly_payout_percent;
   let entnahmeStartTotal = null;
+  let basePayoutValue = null; // Basis-Entnahme für Inflationsanpassung
 
   let cumulativeInflation = 1;
 
@@ -380,14 +407,32 @@ function simulate(params) {
         entnahmeStartTotal = savings + totalEtfShares * currentEtfPrice;
         if (monthly_payout_percent != null && !payoutFromPercentDone) {
           payoutValue = entnahmeStartTotal * (monthly_payout_percent / 100) / 12;
+          basePayoutValue = payoutValue;
           payoutFromPercentDone = true;
           payoutPercentPa = monthly_payout_percent;
         } else if (payoutValue != null) {
+          basePayoutValue = payoutValue;
           payoutPercentPa = entnahmeStartTotal > 0 ? (payoutValue * 12 / entnahmeStartTotal * 100) : 0;
         }
       }
 
-      let needed_net = payoutValue || 0;
+      // Inflationsanpassung der Entnahme (bei EUR-Modus)
+      let currentPayout = payoutValue || 0;
+      if (inflation_adjust_withdrawal && monthly_payout_net != null && basePayoutValue != null) {
+        // Entnahme jährlich um Inflation erhöhen
+        const withdrawalYearIdx = yearIdx - savings_years;
+        currentPayout = basePayoutValue * Math.pow(1 + inflation_rate_pa / 100, withdrawalYearIdx);
+      }
+
+      // Min/Max Grenzen anwenden
+      if (withdrawal_min > 0 && currentPayout < withdrawal_min) {
+        currentPayout = withdrawal_min;
+      }
+      if (withdrawal_max > 0 && currentPayout > withdrawal_max) {
+        currentPayout = withdrawal_max;
+      }
+
+      let needed_net = currentPayout;
       if (special_interval_years_withdrawal > 0
         && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
         needed_net += special_payout_net_withdrawal;
@@ -430,6 +475,9 @@ function simulate(params) {
     const etf_value = totalEtfShares * currentEtfPrice;
     const total = savings + etf_value;
 
+    // Aktuelle Entnahme für diesen Monat (nach Limits)
+    const effectivePayout = isSavingsPhase ? null : (withdrawal > 0 ? withdrawal : null);
+    
     history.push({
       month: monthIdx,
       year: yearIdx + 1,
@@ -443,7 +491,7 @@ function simulate(params) {
       savings_interest: savingsInterest,
       withdrawal: withdrawal_paid,
       tax_paid,
-      payout_value: isSavingsPhase ? null : payoutValue,
+      payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
     });
@@ -501,6 +549,57 @@ function renderTable(history) {
     lastRow = row;
   }
   flush();
+}
+
+function renderStats(history, params) {
+  if (!history.length) return;
+
+  const lastRow = history[history.length - 1];
+  const ansparRows = history.filter(r => r.phase === "Anspar");
+  const entnahmeRows = history.filter(r => r.phase === "Entnahme");
+
+  // Endvermögen
+  document.getElementById("stat-end-nominal").textContent = formatCurrency(lastRow.total);
+  document.getElementById("stat-end-real").textContent = formatCurrency(lastRow.total_real || lastRow.total);
+
+  // Eingezahlt gesamt (Start + alle Beiträge)
+  const totalInvested = (params.start_savings || 0) + (params.start_etf || 0) +
+    ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
+  document.getElementById("stat-total-invested").textContent = formatCurrency(totalInvested);
+
+  // Rendite gesamt
+  const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
+  document.getElementById("stat-total-return").textContent = formatCurrency(totalReturn);
+
+  // Entnahme-Statistiken
+  const withdrawals = entnahmeRows.filter(r => r.withdrawal > 0).map(r => r.withdrawal);
+  if (withdrawals.length > 0) {
+    const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
+    const minWithdrawal = Math.min(...withdrawals);
+    const maxWithdrawal = Math.max(...withdrawals);
+    document.getElementById("stat-avg-withdrawal").textContent = formatCurrency(avgWithdrawal);
+    document.getElementById("stat-minmax-withdrawal").textContent = 
+      `${formatCurrency(minWithdrawal)} / ${formatCurrency(maxWithdrawal)}`;
+  } else {
+    document.getElementById("stat-avg-withdrawal").textContent = "-";
+    document.getElementById("stat-minmax-withdrawal").textContent = "-";
+  }
+
+  // Steuern gesamt
+  const totalTax = history.reduce((sum, r) => sum + (r.tax_paid || 0), 0);
+  document.getElementById("stat-total-tax").textContent = formatCurrency(totalTax);
+
+  // Effektive Entnahmerate (bezogen auf Startvermögen Entnahmephase)
+  if (entnahmeRows.length > 0 && withdrawals.length > 0) {
+    const entnahmeStartIdx = ansparRows.length;
+    const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
+    const startCapital = entnahmeStartRow.total;
+    const avgAnnualWithdrawal = (withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length) * 12;
+    const effectiveRate = startCapital > 0 ? (avgAnnualWithdrawal / startCapital * 100) : 0;
+    document.getElementById("stat-effective-rate").textContent = `${nf2.format(effectiveRate)} % p.a.`;
+  } else {
+    document.getElementById("stat-effective-rate").textContent = "-";
+  }
 }
 
 function renderGraph(history) {
@@ -677,6 +776,7 @@ form.addEventListener("submit", (e) => {
   try {
     messageEl.textContent = "";
     const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+    const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
     
     // Validierte Parameter mit Grenzen
     const params = {
@@ -686,12 +786,16 @@ form.addEventListener("submit", (e) => {
       monthly_etf: readNumber("monthly_etf", { min: 0 }),
       savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
       etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+      etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
       savings_target: readNumber("savings_target", { min: 0 }),
       annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
       savings_years: readNumber("years_save", { min: 1, max: 100 }),
       withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
       monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
       monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+      withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+      withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+      inflation_adjust_withdrawal: inflationAdjust,
       special_payout_net_savings: readNumber("special_savings", { min: 0 }),
       special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
       special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
@@ -704,6 +808,7 @@ form.addEventListener("submit", (e) => {
     lastParams = params;
     renderGraph(lastHistory);
     renderTable(lastHistory);
+    renderStats(lastHistory, params);
     updateRentFields(lastHistory, mode);
     saveToStorage(params);
     messageEl.textContent = "Simulation aktualisiert.";
