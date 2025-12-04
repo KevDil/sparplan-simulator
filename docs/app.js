@@ -334,6 +334,7 @@ function simulate(params) {
     let withdrawal = 0;
     let tax_paid = 0;
     let withdrawal_paid = 0;
+    let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
 
     // ANSPARPHASE
     if (isSavingsPhase) {
@@ -433,6 +434,7 @@ function simulate(params) {
         currentPayout = withdrawal_max;
       }
 
+      monthlyPayout = currentPayout; // Nur reguläre monatliche Entnahme (für Statistik)
       let needed_net = currentPayout;
       if (special_interval_years_withdrawal > 0
         && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
@@ -491,12 +493,14 @@ function simulate(params) {
       etf_contrib,
       savings_interest: savingsInterest,
       withdrawal: withdrawal_paid,
-      withdrawal_real: withdrawal_paid / cumulativeInflation, // Reale Kaufkraft der Entnahme
+      withdrawal_real: withdrawal_paid / cumulativeInflation,
+      monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
+      monthly_payout_real: monthlyPayout / cumulativeInflation,
       tax_paid,
       payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
-      cumulative_inflation: cumulativeInflation, // Für Debugging/Anzeige
+      cumulative_inflation: cumulativeInflation,
     });
   }
 
@@ -574,25 +578,38 @@ function renderStats(history, params) {
   const totalReturn = history.reduce((sum, r) => sum + (r.return_gain || 0), 0);
   document.getElementById("stat-total-return").textContent = formatCurrency(totalReturn);
 
-  // Entnahme-Statistiken (nominal)
+  // Entnahme-Statistiken
+  // Für Durchschnitt: Gesamtentnahmen (inkl. Sonderausgaben)
   const withdrawals = entnahmeRows.filter(r => r.withdrawal > 0).map(r => r.withdrawal);
   const withdrawalsReal = entnahmeRows.filter(r => r.withdrawal_real > 0).map(r => r.withdrawal_real);
   
+  // Für Min/Max: Nur reguläre monatliche Entnahmen (ohne Sonderausgaben)
+  const monthlyPayouts = entnahmeRows.filter(r => r.monthly_payout > 0).map(r => r.monthly_payout);
+  const monthlyPayoutsReal = entnahmeRows.filter(r => r.monthly_payout_real > 0).map(r => r.monthly_payout_real);
+  
   if (withdrawals.length > 0) {
     const avgWithdrawal = withdrawals.reduce((a, b) => a + b, 0) / withdrawals.length;
-    const minWithdrawal = Math.min(...withdrawals);
-    const maxWithdrawal = Math.max(...withdrawals);
     document.getElementById("stat-avg-withdrawal").textContent = formatCurrency(avgWithdrawal);
-    document.getElementById("stat-minmax-withdrawal").textContent = 
-      `${formatCurrency(minWithdrawal)} / ${formatCurrency(maxWithdrawal)}`;
     
-    // Reale Kaufkraft der Entnahmen
+    // Reale Kaufkraft der Entnahmen (Durchschnitt)
     const avgWithdrawalReal = withdrawalsReal.reduce((a, b) => a + b, 0) / withdrawalsReal.length;
-    const minWithdrawalReal = Math.min(...withdrawalsReal);
-    const maxWithdrawalReal = Math.max(...withdrawalsReal);
     document.getElementById("stat-avg-withdrawal-real").textContent = formatCurrency(avgWithdrawalReal);
-    document.getElementById("stat-minmax-withdrawal-real").textContent = 
-      `${formatCurrency(minWithdrawalReal)} / ${formatCurrency(maxWithdrawalReal)}`;
+    
+    // Min/Max nur für reguläre monatliche Entnahmen
+    if (monthlyPayouts.length > 0) {
+      const minMonthly = Math.min(...monthlyPayouts);
+      const maxMonthly = Math.max(...monthlyPayouts);
+      document.getElementById("stat-minmax-withdrawal").textContent = 
+        `${formatCurrency(minMonthly)} / ${formatCurrency(maxMonthly)}`;
+      
+      const minMonthlyReal = Math.min(...monthlyPayoutsReal);
+      const maxMonthlyReal = Math.max(...monthlyPayoutsReal);
+      document.getElementById("stat-minmax-withdrawal-real").textContent = 
+        `${formatCurrency(minMonthlyReal)} / ${formatCurrency(maxMonthlyReal)}`;
+    } else {
+      document.getElementById("stat-minmax-withdrawal").textContent = "-";
+      document.getElementById("stat-minmax-withdrawal-real").textContent = "-";
+    }
   } else {
     document.getElementById("stat-avg-withdrawal").textContent = "-";
     document.getElementById("stat-minmax-withdrawal").textContent = "-";
