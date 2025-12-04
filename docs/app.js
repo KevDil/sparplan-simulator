@@ -101,12 +101,12 @@ function applyStoredValues() {
 
 function getDefaultValues() {
   return {
-    start_savings: 2700,
+    start_savings: 4000,
     start_etf: 100,
     savings_rate: 3.0,
-    etf_rate: 7.0,
+    etf_rate: 6.0,
     savings_target: 5000,
-    years_save: 15,
+    years_save: 36,
     monthly_savings: 100,
     monthly_etf: 150,
     annual_raise: 3.0,
@@ -509,9 +509,8 @@ function renderGraph(history) {
   const padX = 60;
   const padY = 50;
   const totals = history.map(r => r.total);
-  const etfs = history.map(r => r.etf);
-  const savings = history.map(r => r.savings);
-  const maxVal = Math.max(1, ...totals);
+  const totalsReal = history.map(r => r.total_real ?? r.total);
+  const maxVal = Math.max(1, ...totals, ...totalsReal);
   const xDenom = Math.max(history.length - 1, 1);
 
   const toXY = (idx, val) => {
@@ -574,8 +573,7 @@ function renderGraph(history) {
   };
 
   drawLine(totals, "#f59e0b");
-  drawLine(etfs, "#2563eb");
-  drawLine(savings, "#0ea5e9");
+  drawLine(totalsReal, "#22c55e");
 
   // Phasen-Trennung
   const switchIdx = history.findIndex(r => r.phase === "Entnahme");
@@ -618,8 +616,7 @@ function handleHover(evt) {
   const lines = [
     `Jahr ${row.year}, Monat ${row.month}`,
     `Gesamt: ${formatCurrency(row.total)}`,
-    `Real (inflationsbereinigt): ${formatCurrency(row.total_real || row.total)}`,
-    `ETF: ${formatCurrency(row.etf)} | TG: ${formatCurrency(row.savings)}`
+    `Gesamt (inflationsbereinigt): ${formatCurrency(row.total_real || row.total)}`
   ];
   tooltip.textContent = lines.join("\n");
   tooltip.style.left = `${evt.clientX + 14}px`;

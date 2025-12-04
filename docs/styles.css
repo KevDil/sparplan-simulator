@@ -257,8 +257,7 @@ input[type="number"]:focus {
 }
 
 .dot--total { background: #f59e0b; }
-.dot--etf { background: #2563eb; }
-.dot--cash { background: #0ea5e9; }
+.dot--real { background: #22c55e; }
 
 .graph-wrapper {
   background: #0b162a;
