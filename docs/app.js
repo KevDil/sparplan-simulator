@@ -389,6 +389,10 @@ async function exportToPdf(history, params = lastParams) {
       monthly_payout_percent: "Wunschrente (%)",
       inflation_rate_pa: "Inflation p.a.",
       sparerpauschbetrag: "Sparerpauschbetrag",
+      capital_preservation_enabled: "Kapitalerhalt aktiv",
+      capital_preservation_threshold: "Kapitalerhalt Schwelle",
+      capital_preservation_reduction: "Kapitalerhalt Reduktion",
+      capital_preservation_recovery: "Kapitalerhalt Erholung",
     };
     
     const col1X = margin;
@@ -722,6 +726,10 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
         monthly_payout_percent: "Wunschrente (%)",
         inflation_rate_pa: "Inflation p.a.",
         sparerpauschbetrag: "Sparerpauschbetrag",
+        capital_preservation_enabled: "Kapitalerhalt aktiv",
+        capital_preservation_threshold: "Kapitalerhalt Schwelle",
+        capital_preservation_reduction: "Kapitalerhalt Reduktion",
+        capital_preservation_recovery: "Kapitalerhalt Erholung",
       };
       
       for (const [key, label] of Object.entries(paramLabels)) {
