@@ -6,18 +6,21 @@ const SPARERPAUSCHBETRAG_VERHEIRATET = 2000;
 const KIRCHENSTEUER_SATZ_8 = 0.08; // Bayern, Baden-Württemberg
 const KIRCHENSTEUER_SATZ_9 = 0.09; // Restliche Bundesländer
 
-// Berechnet effektiven Steuersatz inkl. Kirchensteuer
+// Berechnet effektiven Steuersatz inkl. Kirchensteuer.
+// Hinweis: Bei KiSt darf die Gesamtbelastung nicht unter die 26,375% (ohne KiSt) fallen.
+// Wir nutzen die in der Praxis verwendeten Effektiv-Sätze (Kirchensteuerabzugsverfahren).
 function calculateTaxRate(kirchensteuerSatz = 0) {
-  // Mit Kirchensteuer: KESt wird leicht reduziert (Sonderausgabenabzug)
-  // Formel: KESt_eff = KESt / (1 + KiSt_Satz)
-  if (kirchensteuerSatz > 0) {
-    const kestEffektiv = TAX_RATE_BASE / (1 + kirchensteuerSatz);
-    const soli = kestEffektiv * SOLI_RATE;
-    const kist = kestEffektiv * kirchensteuerSatz;
-    return kestEffektiv + soli + kist;
-  }
-  // Ohne Kirchensteuer: 25% + 5.5% Soli = 26.375%
-  return TAX_RATE_BASE * (1 + SOLI_RATE);
+  const basePlusSoli = TAX_RATE_BASE * (1 + SOLI_RATE); // 26,375% ohne KiSt
+
+  if (kirchensteuerSatz === 0) return basePlusSoli;
+
+  // Effektivbelastung laut KiSt-Abzugsverfahren (gerundet):
+  // 8% KiSt: ~27,82%, 9% KiSt: ~27,99%
+  if (kirchensteuerSatz === KIRCHENSTEUER_SATZ_8) return 0.27818;
+  if (kirchensteuerSatz === KIRCHENSTEUER_SATZ_9) return 0.27995;
+
+  // Fallback: additiver Aufschlag (konservativ, etwas höher als basePlusSoli)
+  return basePlusSoli + TAX_RATE_BASE * kirchensteuerSatz;
 }
 const MONTHS_PER_YEAR = 12;
 const INITIAL_ETF_PRICE = 100;
@@ -131,6 +134,7 @@ function applyStoredValues() {
     { id: "inflation_adjust_special_savings", key: "inflation_adjust_special_savings" },
     { id: "inflation_adjust_special_withdrawal", key: "inflation_adjust_special_withdrawal" },
     { id: "capital_preservation_enabled", key: "capital_preservation_enabled" },
+    { id: "use_fifo", key: "use_fifo" },
   ];
   for (const { id, key } of checkboxes) {
     const el = document.getElementById(id);
@@ -180,6 +184,7 @@ function getDefaultValues() {
     sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer: "keine",
     basiszins: 2.53,
+    use_fifo: true,
     capital_preservation_enabled: false,
     capital_preservation_threshold: 80,
     capital_preservation_reduction: 25,
@@ -276,9 +281,9 @@ function exportMonteCarloToCsv(results, params = lastParams) {
   // Zusammenfassung
   const summaryRows = [
     ["=== ZUSAMMENFASSUNG ===", ""],
-    ["Erfolgswahrscheinlichkeit", `${results.successRate.toFixed(1)}%`],
+    ["Erfolgswahrscheinlichkeit (keine Shortfalls & positives Ende)", `${results.successRate.toFixed(1)}%`],
     ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
-    ["Pleite-Risiko", `${results.ruinProbability.toFixed(1)}%`],
+    ["Pleite-Risiko (Pfad: jemals <10k oder Shortfall)", `${results.ruinProbability.toFixed(1)}%`],
     [],
     ["Endvermögen (Median)", results.medianEnd.toFixed(2)],
     ["Endvermögen (10%-Perzentil)", results.p10End.toFixed(2)],
@@ -657,7 +662,7 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
       ["Endvermögen real (Median)", formatCurrency(results.medianEndReal)],
       ["Endvermögen real (10%-90%)", `${formatCurrency(results.p10EndReal)} - ${formatCurrency(results.p90EndReal)}`],
       ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
-      ["Pleite-Risiko", `${results.ruinProbability.toFixed(1)}%`],
+      ["Pleite-Risiko (Pfad)", `${results.ruinProbability.toFixed(1)}%`],
       ["Vermögen bei Rentenbeginn", formatCurrency(results.retirementMedian)],
     ];
     
@@ -811,13 +816,15 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
 
 // ============ ETF SELLING (EXTRACTED) ============
 
-function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate) {
+function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo = true) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
   let grossProceeds = 0; // Brutto-Verkaufserlös für Vorabpauschale-Tracking
   
   while (remaining > 0.01 && etfLots.length) {
-    const lot = etfLots[etfLots.length - 1];
+    // FIFO: Erstes Element (ältestes Lot), LIFO: Letztes Element (neuestes Lot)
+    const lotIndex = useFifo ? 0 : etfLots.length - 1;
+    const lot = etfLots[lotIndex];
     const gainPerShare = currentEtfPrice - lot.price;
     const remainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
     let sharesNeeded;
@@ -856,7 +863,12 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     taxPaid += partTax;
 
     if (sharesNeeded >= lot.amount) {
-      etfLots.pop();
+      // FIFO: Erstes Element entfernen, LIFO: Letztes Element entfernen
+      if (useFifo) {
+        etfLots.shift();
+      } else {
+        etfLots.pop();
+      }
     } else {
       lot.amount -= sharesToSell;
     }
@@ -893,6 +905,7 @@ function simulate(params) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
+    use_fifo = true,
     capital_preservation_enabled = false,
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
@@ -1039,7 +1052,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1142,7 +1155,7 @@ function simulate(params) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1708,6 +1721,7 @@ form.addEventListener("submit", (e) => {
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+      use_fifo: document.getElementById("use_fifo")?.checked ?? true,
       rent_mode: mode,
       capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
@@ -1957,6 +1971,7 @@ function simulateStochastic(params, annualVolatility) {
     sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer = "keine",
     basiszins = 2.53,
+    use_fifo = true,
     capital_preservation_enabled = false,
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
@@ -2089,7 +2104,7 @@ function simulateStochastic(params, annualVolatility) {
           remaining -= use;
         }
 
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -2176,7 +2191,7 @@ function simulateStochastic(params, annualVolatility) {
           remaining -= use;
         }
 
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, use_fifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -2514,6 +2529,9 @@ function analyzeMonteCarloResults(allHistories, params) {
   const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
   
   // Pleite-Risiko: Vermögen fällt unter 10.000 € ODER Shortfall tritt auf
+  // HINWEIS: Dies ist ein PFAD-Kriterium - wenn es irgendwann eintritt, zählt es.
+  // Daher NICHT komplementär zur Erfolgsrate (ein Lauf kann temporär "Pleite" sein,
+  // sich aber erholen und als "Erfolg" enden).
   let ruinCount = 0;
   for (const history of allHistories) {
     let isRuin = false;
