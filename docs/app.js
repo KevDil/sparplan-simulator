@@ -266,6 +266,9 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     ["Exportzeitpunkt", new Date().toISOString()],
     ["Simulationstyp", "Monte-Carlo"],
     ["Anzahl Simulationen", results.iterations],
+    ["Volatilität p.a.", `${results.volatility || ""}%`],
+    [],
+    ["=== EINGABEPARAMETER ===", ""],
     ...Object.entries(params || {}).map(([key, val]) => [key, val ?? ""]),
     [],
   ];
@@ -2270,6 +2273,7 @@ async function runMonteCarloSimulation(params, iterations, volatility, showIndiv
   
   // Analysiere Ergebnisse
   const results = analyzeMonteCarloResults(allHistories, params);
+  results.volatility = volatility;
   results.showIndividual = showIndividual;
   results.allHistories = showIndividual ? allHistories.slice(0, 50) : [];
   
@@ -2892,6 +2896,9 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
       capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
     };
+    
+    // Params für Export speichern
+    lastParams = params;
     
     const iterations = readNumber("mc_iterations", { min: 100, max: 10000 });
     const volatility = readNumber("mc_volatility", { min: 1, max: 50 });
