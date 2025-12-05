@@ -14,6 +14,9 @@
  *   (Mischfonds: 15% frei, Rentenfonds: 0% frei – hier nicht implementiert)
  * - Verlustverrechnung vereinfacht (kein Verlustvortrag über Jahre, keine Verlustverrechnungstöpfe)
  * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
+ * - Vorabpauschale-Liquidität: Bei Unterdeckung des Tagesgeldes wird die Steuer auf verfügbares
+ *   Guthaben gekappt (kein automatischer ETF-Verkauf). In der Praxis würde die Depotbank
+ *   ggf. Anteile zwangsverkaufen oder einen Dispo belasten.
  * 
  * STEUERBERECHNUNG:
  * - Basisertrag = Wert × Basiszins × 0,7 (§ 18 Abs. 1 InvStG)
@@ -1120,6 +1123,8 @@ function simulate(params, volatility = 0) {
         
         vorabpauschaleTaxPaidThisMonth = taxableAfterFreibetrag * taxRate;
         savings -= vorabpauschaleTaxPaidThisMonth;
+        // VEREINFACHUNG: Bei Unterdeckung wird auf 0 gekappt (kein ETF-Verkauf)
+        // In der Praxis würde die Bank ggf. Anteile zwangsverkaufen
         if (savings < 0) savings = 0;
         
         yearlyUsedFreibetrag = freibetragUsed; // Freibetrag des neuen Jahres bereits teilweise verbraucht
@@ -1505,10 +1510,13 @@ function simulate(params, volatility = 0) {
     // Letzten History-Eintrag aktualisieren (als "fällig im Folgejahr" markiert)
     const lastEntry = history[history.length - 1];
     lastEntry.savings -= finalVorabpauschaleTax;
+    // VEREINFACHUNG: Bei Unterdeckung wird auf 0 gekappt (kein ETF-Verkauf)
     if (lastEntry.savings < 0) lastEntry.savings = 0;
     lastEntry.total = lastEntry.savings + lastEntry.etf; // Achtung: Property heißt 'etf', nicht 'etf_value'
     lastEntry.total_real = lastEntry.total / lastEntry.cumulative_inflation;
     lastEntry.tax_paid += finalVorabpauschaleTax;
+    // Vorabpauschale-Steuer auch in vorabpauschale_tax addieren (für UI-Summe/CSV)
+    lastEntry.vorabpauschale_tax = (lastEntry.vorabpauschale_tax || 0) + finalVorabpauschaleTax;
     // Speichere die pending Vorabpauschale-Steuer als Meta-Info
     lastEntry.pending_vorabpauschale_tax = finalVorabpauschaleTax;
     
@@ -2651,9 +2659,10 @@ function analyzeMonteCarloResults(allHistories, params) {
     const successThresholdNominal = SUCCESS_THRESHOLD_REAL * endInflation;
     const hasPositiveEnd = endWealth > successThresholdNominal;
     
-    // Prüfe auf Shortfalls in der Entnahmephase
+    // Prüfe auf Shortfalls über die GESAMTE Laufzeit (Anspar- + Entnahmephase)
+    // Shortfalls in der Ansparphase = Sonderausgaben konnten nicht vollständig gedeckt werden
     let hasShortfall = false;
-    for (let m = savingsMonths; m < numMonths; m++) {
+    for (let m = 0; m < numMonths; m++) {
       if ((history[m]?.shortfall || 0) > 0.01) {
         hasShortfall = true;
         break;
@@ -2699,7 +2708,8 @@ function analyzeMonteCarloResults(allHistories, params) {
   let ruinCount = 0;
   for (const history of allHistories) {
     let isRuin = false;
-    for (let m = savingsMonths; m < numMonths; m++) {
+    // Prüfe gesamte Laufzeit (auch Ansparphase) auf Vermögenseinbrüche und Shortfalls
+    for (let m = 0; m < numMonths; m++) {
       const monthInflation = history[m]?.cumulative_inflation || 1;
       const ruinThresholdNominal = RUIN_THRESHOLD_REAL * monthInflation;
       if ((history[m]?.total || 0) < ruinThresholdNominal || (history[m]?.shortfall || 0) > 0.01) {
