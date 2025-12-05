@@ -1678,8 +1678,13 @@ function renderStats(history, params) {
   const entnahmeRows = history.filter(r => r.phase === "Entnahme");
   
   // Vermögen bei Rentenbeginn berechnen
+  // KORRIGIERT: Nutze den ERSTEN Entnahmemonat (nach Vorabpauschale-Abzug im Januar),
+  // nicht den letzten Ansparmonat, da die Januar-Steuer das verfügbare Kapital reduziert.
   const entnahmeStartIdx = ansparRows.length;
-  const entnahmeStartRow = entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0];
+  // Falls Entnahmephase existiert: erster Entnahmemonat; sonst: letzter Ansparmonat als Fallback
+  const entnahmeStartRow = entnahmeRows.length > 0 
+    ? entnahmeRows[0] 
+    : (entnahmeStartIdx > 0 ? history[entnahmeStartIdx - 1] : history[0]);
   const retirementWealth = entnahmeStartRow.total;
   const retirementWealthReal = entnahmeStartRow.total_real || retirementWealth;
 
@@ -1695,7 +1700,11 @@ function renderStats(history, params) {
   }
 
   // Eingezahlt gesamt (Start + alle Beiträge)
-  const totalInvested = (params.start_savings || 0) + (params.start_etf || 0) +
+  // KORRIGIERT: Nutze cost_basis für Start-ETF statt Marktwert, falls angegeben
+  const effectiveStartEtf = (params.start_etf_cost_basis > 0) 
+    ? params.start_etf_cost_basis 
+    : (params.start_etf || 0);
+  const totalInvested = (params.start_savings || 0) + effectiveStartEtf +
     ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
   document.getElementById("stat-total-invested").textContent = formatCurrency(totalInvested);
 
@@ -1800,14 +1809,29 @@ function renderStats(history, params) {
     retirementRealEl.textContent = formatCurrency(retirementWealthReal);
   }
   
-  // Eingezahlt gesamt (auch in der Real-Ansicht nominal anzeigen)
-  const totalInvestedRealEl = document.getElementById("stat-total-invested-real");
-  if (totalInvestedRealEl) {
-    totalInvestedRealEl.textContent = formatCurrency(totalInvested);
+  // Eingezahlt gesamt (real) - Einzahlungen inflationsbereinigt
+  // KORRIGIERT: Jede Einzahlung wird auf heutige Kaufkraft umgerechnet (durch kumulative Inflation)
+  // Startvermögen wird mit Inflation zum Zeitpunkt 0 (=1) bewertet
+  const effectiveStartEtfReal = (params.start_etf_cost_basis > 0) 
+    ? params.start_etf_cost_basis 
+    : (params.start_etf || 0);
+  let totalInvestedReal = (params.start_savings || 0) + effectiveStartEtfReal; // Startwerte bei Inflation=1
+  
+  // Laufende Beiträge inflationsbereinigen (dividieren durch kumulative Inflation)
+  for (const row of ansparRows) {
+    const monthContrib = (row.savings_contrib || 0) + (row.etf_contrib || 0);
+    const inflation = row.cumulative_inflation || 1;
+    totalInvestedReal += monthContrib / inflation;
   }
   
-  // Rendite gesamt (real) - Endvermögen real minus Eingezahlt
-  const totalReturnReal = (lastRow.total_real || lastRow.total) - totalInvested;
+  const totalInvestedRealEl = document.getElementById("stat-total-invested-real");
+  if (totalInvestedRealEl) {
+    totalInvestedRealEl.textContent = formatCurrency(totalInvestedReal);
+  }
+  
+  // Rendite gesamt (real) - Endvermögen real minus Einzahlungen real
+  // KORRIGIERT: Konsistente Berechnung mit inflationsbereinigten Einzahlungen
+  const totalReturnReal = (lastRow.total_real || lastRow.total) - totalInvestedReal;
   const totalReturnRealEl = document.getElementById("stat-total-return-real");
   if (totalReturnRealEl) {
     totalReturnRealEl.textContent = formatCurrency(totalReturnReal);
@@ -1856,7 +1880,11 @@ function renderStats(history, params) {
       // (Entnahme verzerrt die Renditeberechnung)
       const ansparEnd = ansparRows.length > 0 ? ansparRows[ansparRows.length - 1] : null;
       if (ansparEnd) {
-        const startTotal = (params.start_savings || 0) + (params.start_etf || 0);
+        // KORRIGIERT: Nutze cost_basis für Start-ETF wenn angegeben
+        const effectiveStartEtfCost = (params.start_etf_cost_basis > 0) 
+          ? params.start_etf_cost_basis 
+          : (params.start_etf || 0);
+        const startTotal = (params.start_savings || 0) + effectiveStartEtfCost;
         const totalContribs = ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
         const costBasis = startTotal + totalContribs;
         const ansparEndValue = ansparEnd.total || 0;
@@ -1879,7 +1907,11 @@ function renderStats(history, params) {
       }
     } else {
       // Nur Ansparphase: Berechne CAGR aus tatsächlichem Verlauf
-      const startTotal = (params.start_savings || 0) + (params.start_etf || 0);
+      // KORRIGIERT: Nutze cost_basis für Start-ETF wenn angegeben
+      const effectiveStartEtfCost = (params.start_etf_cost_basis > 0) 
+        ? params.start_etf_cost_basis 
+        : (params.start_etf || 0);
+      const startTotal = (params.start_savings || 0) + effectiveStartEtfCost;
       const totalContribs = ansparRows.reduce((sum, r) => sum + (r.savings_contrib || 0) + (r.etf_contrib || 0), 0);
       const endValue = lastRow.total || 0;
       const yearsTotal = history.length / 12;
@@ -2737,9 +2769,7 @@ function analyzeMonteCarloResults(allHistories, params) {
   
   // Erfolgsrate: Vermögen > 100 € (real) am Ende UND keine Shortfalls während Entnahmephase
   // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
-  // WICHTIG: Schwellen sind REAL (inflationsbereinigt), nicht nominal!
-  const SUCCESS_THRESHOLD_REAL = 100; // 100€ in heutiger Kaufkraft
-  const RUIN_THRESHOLD_REAL = 10000;  // 10.000€ in heutiger Kaufkraft
+  const SUCCESS_THRESHOLD_REAL = 100; // 100€ in heutiger Kaufkraft (real)
   
   let successCountStrict = 0;
   let successCountNominal = 0;
@@ -2794,20 +2824,23 @@ function analyzeMonteCarloResults(allHistories, params) {
   }
   const capitalPreservationRateReal = (capitalPreservationRealCount / numSims) * 100;
   
-  // Pleite-Risiko: Vermögen fällt unter 10.000 € REAL ODER Shortfall tritt auf
-  // HINWEIS: Dies ist ein PFAD-Kriterium - wenn es irgendwann eintritt, zählt es.
-  // Daher NICHT komplementär zur Erfolgsrate (ein Lauf kann temporär "Pleite" sein,
-  // sich aber erholen und als "Erfolg" enden).
-  // Schwelle ist REAL: 10.000€ in heutiger Kaufkraft
+  // Pleite-Risiko: Vermögen fällt NUR IN DER ENTNAHMEPHASE unter 10% des 
+  // Rentenbeginn-Vermögens ODER Shortfall tritt in Entnahmephase auf.
+  // KORRIGIERT: Schwelle ist relativ zum Vermögen bei Rentenbeginn, nicht absolut.
+  // Die Ansparphase wird ignoriert, da dort niedrige Vermögen normal sind.
+  const RUIN_THRESHOLD_PERCENT = 0.1; // 10% des Rentenbeginn-Vermögens
   let ruinCount = 0;
   for (const history of allHistories) {
     let isRuin = false;
-    // Prüfe gesamte Laufzeit (auch Ansparphase) auf Vermögenseinbrüche und Shortfalls
-    for (let m = 0; m < numMonths; m++) {
-      const monthInflation = history[m]?.cumulative_inflation || 1;
-      const ruinThresholdNominal = RUIN_THRESHOLD_REAL * monthInflation;
+    // Rentenbeginn-Vermögen als Referenz für diese Simulation
+    const retirementWealthSim = history[retirementIdx]?.total || 0;
+    const ruinThresholdAbsolute = retirementWealthSim * RUIN_THRESHOLD_PERCENT;
+    
+    // NUR Entnahmephase prüfen (ab savingsMonths)
+    for (let m = savingsMonths; m < numMonths; m++) {
       const shortfallThisMonth = (history[m]?.shortfall || 0) > 0.01 || (history[m]?.tax_shortfall || 0) > 0.01;
-      if ((history[m]?.total || 0) < ruinThresholdNominal || shortfallThisMonth) {
+      // Nominal prüfen, da Referenz auch nominal ist
+      if ((history[m]?.total || 0) < ruinThresholdAbsolute || shortfallThisMonth) {
         isRuin = true;
         break;
       }
@@ -2859,20 +2892,48 @@ function analyzeMonteCarloResults(allHistories, params) {
   const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, totalMonths / MONTHS_PER_YEAR);
   const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
   
-  // KORRIGIERT: Reale Rendite p.a. aus Simulationsergebnissen berechnen
-  // Verwende die Median-Vermögensentwicklung bis zum Rentenbeginn (ohne Entnahme-Effekte)
-  const startTotal = params.start_savings + params.start_etf;
+  // KORRIGIERT: Reale Rendite p.a. mit Modified Dietz Methode
+  // Berücksichtigt laufende Einzahlungen zeitgewichtet, nicht nur Startvermögen
+  // KORRIGIERT: Nutze cost_basis für Start-ETF wenn angegeben (konsistent mit renderStats)
+  const effectiveStartEtfCost = (params.start_etf_cost_basis > 0) 
+    ? params.start_etf_cost_basis 
+    : (params.start_etf || 0);
+  const startTotal = params.start_savings + effectiveStartEtfCost;
   const savingsYearsNum = params.savings_years || 1;
+  const monthlySavings = params.monthly_savings || 0;
+  const monthlyEtf = params.monthly_etf || 0;
+  const monthlyContrib = monthlySavings + monthlyEtf;
   
-  // Berechne CAGR für das Median-Szenario in der Ansparphase
-  // (Rentenbeginn-Vermögen ist aussagekräftiger als Endvermögen wegen Entnahmen)
+  // Modified Dietz: R = (V_end - V_start - CF_total) / (V_start + CF_weighted)
+  // CF_weighted = Sum(CF_i * (T - t_i) / T), wobei T = Gesamtmonate, t_i = Monat der Einzahlung
   let realReturnPa = 0;
-  if (retirementMedian > 0 && startTotal > 0) {
-    // Annualisierte nominale Rendite aus Median-Vermögen bei Rentenbeginn
-    // Hinweis: Dies ist eine Approximation, da monatliche Einzahlungen nicht perfekt berücksichtigt werden
-    const nominalCagr = Math.pow(retirementMedian / Math.max(startTotal, 1), 1 / savingsYearsNum) - 1;
-    // Reale Rendite = (1 + nominal) / (1 + inflation) - 1
-    realReturnPa = ((1 + nominalCagr) / (1 + inflationRatePa / 100) - 1) * 100;
+  if (savingsMonths > 0) {
+    // Gesamte Cashflows (vereinfacht: gleiche monatliche Einzahlung)
+    const totalContributions = monthlyContrib * savingsMonths;
+    
+    // Zeitgewichtete Cashflows: Jede Einzahlung am Anfang von Monat m hat Gewicht (savingsMonths - m) / savingsMonths
+    // Für gleichmäßige Einzahlungen: Summe = monthlyContrib * Sum((T-m)/T) für m=0..T-1
+    // = monthlyContrib * (T + T-1 + ... + 1) / T = monthlyContrib * (T+1)/2
+    // Aber bei Einzahlung am Monatsende: Gewicht = (T - m - 1) / T
+    // Approximation: Durchschnittliches Gewicht ≈ 0.5 (Mitte der Periode)
+    const weightedContributions = totalContributions * 0.5;
+    
+    // Modified Dietz Return (nicht annualisiert)
+    const denominator = startTotal + weightedContributions;
+    if (denominator > 0 && retirementMedian > 0) {
+      const modifiedDietzReturn = (retirementMedian - startTotal - totalContributions) / denominator;
+      
+      // Annualisieren: (1 + R_total)^(1/years) - 1
+      // Aber Modified Dietz gibt bereits eine "return on invested capital" Kennzahl
+      // Für konsistente Annualisierung: Geometrische Approximation
+      const totalReturn = 1 + modifiedDietzReturn;
+      const nominalCagrMD = totalReturn > 0 
+        ? Math.pow(totalReturn, 1 / savingsYearsNum) - 1 
+        : 0;
+      
+      // Reale Rendite = (1 + nominal) / (1 + inflation) - 1
+      realReturnPa = ((1 + nominalCagrMD) / (1 + inflationRatePa / 100) - 1) * 100;
+    }
   }
   
   // Input-basierte theoretische Rendite zum Vergleich
