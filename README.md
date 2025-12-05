@@ -9,6 +9,7 @@ Ein interaktiver Simulator für langfristige Vermögensplanung mit ETFs und Tage
 - **Steueroptimierung**: Standard ist gesetzeskonformes FIFO (First In, First Out), optional LIFO nur zur Analyse
 - **Teilfreistellung**: 30% der ETF-Gewinne steuerfrei (§ 20 Abs. 1 InvStG)
 - **Sparerpauschbetrag**: 1.000 EUR/Jahr automatisch berücksichtigt
+- **Verlustverrechnungstöpfe**: Aktien-Topf für ETF-Verkaufsgewinne/-verluste, Allgemeiner Topf für Zinsen/Vorabpauschale (keine Kreuzverrechnung)
 - **Dynamische Sparraten**: Jährliche Gehaltserhöhung einplanbar
 - **Inflationsbereinigung**: Reale Kaufkraft neben Nominalwerten
 - **Sonderausgaben**: Einplanbare größere Ausgaben in beiden Phasen

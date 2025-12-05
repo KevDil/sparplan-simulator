@@ -82,6 +82,7 @@
             <li><strong>Sparerpauschbetrag:</strong> 1.000€/2.000€ jährlich steuerfrei</li>
             <li><strong>Vorabpauschale:</strong> Jährliche Steuer auf thesaurierende ETFs (Basiszins × 0,7)</li>
             <li><strong>FIFO/LIFO:</strong> Verkaufsreihenfolge – FIFO ist gesetzlich vorgeschrieben, LIFO oft günstiger</li>
+            <li><strong>Verlusttöpfe:</strong> Aktien-Topf für ETF-Verkäufe (nach Teilfreistellung), Allgemeiner Topf für Zinsen/Vorabpauschale. Keine Kreuzverrechnung zwischen den Töpfen.</li>
           </ul>
         </section>
 
@@ -108,7 +109,7 @@
           <h3>⚠️ Hinweise</h3>
           <ul>
             <li>Simulation ≠ Vorhersage – historische Renditen garantieren keine zukünftigen Ergebnisse</li>
-            <li>Deutsches Steuerrecht 2025 – keine Verlustverrechnung modelliert</li>
+            <li>Deutsches Steuerrecht 2025 – inkl. Verlustverrechnungstöpfe (Aktien-Topf / Allgemeiner Topf)</li>
             <li>Inflation, TG-Zins und TER sind fix – nur ETF-Renditen variieren in Monte-Carlo</li>
             <li>Eingaben werden im Browser gespeichert, Export als CSV/PDF möglich</li>
           </ul>
@@ -176,6 +177,16 @@
               <span class="field-label" data-tooltip="Basiszins für die Vorabpauschale bei thesaurierenden ETFs. Wird von der Bundesbank festgelegt (2024: 2,29%, 2025: 2,53%).">Basiszins Vorabpauschale (%)</span>
               <input type="number" step="0.01" id="basiszins" value="2.53" min="-5" max="10">
               <small class="field-hint">2024: 2,29% | 2025: 2,53%</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Bestehender Aktien-Verlusttopf aus Vorjahren. Wird nur mit (teilfreigestellten) Gewinnen aus Aktien/ETF-Verkäufen verrechnet – nicht mit Zinsen oder Vorabpauschale.">Aktien-Verlusttopf (EUR)</span>
+              <input type="number" step="100" id="loss_pot_equity" value="0" min="0" max="10000000">
+              <small class="field-hint">Nur für Aktien-/ETF-Verkaufsgewinne</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Bestehender allgemeiner Verlusttopf aus Vorjahren. Wird mit Zinsen und Vorabpauschale verrechnet – nicht mit ETF-Verkaufsgewinnen.">Allgemeiner Verlusttopf (EUR)</span>
+              <input type="number" step="100" id="loss_pot_general" value="0" min="0" max="10000000">
+              <small class="field-hint">Für Zinsen &amp; Vorabpauschale</small>
             </label>
             <label class="field field--checkbox">
               <input type="checkbox" id="use_lifo">
@@ -808,6 +819,9 @@
                 <th>Rendite</th>
                 <th>Entnahme</th>
                 <th>Steuern</th>
+                <th>Freibetrag genutzt</th>
+                <th>Aktien-Topf</th>
+                <th>Allg. Topf</th>
               </tr>
             </thead>
             <tbody></tbody>

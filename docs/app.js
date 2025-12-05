@@ -12,10 +12,16 @@
  * - Nur thesaurierende Aktienfonds modelliert (keine Ausschüttungen)
  * - Teilfreistellung fix 70% steuerpflichtig (30% frei, § 20 InvStG) – nur für Aktienfonds korrekt
  *   (Mischfonds: 15% frei, Rentenfonds: 0% frei – hier nicht implementiert)
- * - Verlustverrechnung vereinfacht (kein Verlustvortrag über Jahre, keine Verlustverrechnungstöpfe)
  * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
  * - Vorabpauschale-Liquidität: Bei Unterdeckung des Tagesgeldes wird die Steuer auf verfügbares
  *   Guthaben automatischer ETF-Verkauf, bei Totalausfall Shortfall-Flag (keine Dispo-Aufnahme).
+ * 
+ * VERLUSTVERRECHNUNG (vollständig implementiert):
+ * - Aktien-Verlusttopf: Für ETF-Verkaufsgewinne/-verluste (nach Teilfreistellung 70%)
+ * - Allgemeiner Verlusttopf: Für Zinsen und Vorabpauschale
+ * - Reihenfolge: Verlusttopf → Sparerpauschbetrag → Rest versteuern (banknah)
+ * - Keine Kreuzverrechnung zwischen den Töpfen (gesetzeskonform)
+ * - Töpfe werden über Jahre fortgeschrieben (kein Reset am Jahreswechsel)
  * 
  * STEUERBERECHNUNG:
  * - Basisertrag = Wert × Basiszins × 0,7 (§ 18 Abs. 1 InvStG)
@@ -163,6 +169,8 @@ function applyStoredValues() {
     capital_preservation_threshold: "capital_preservation_threshold",
     capital_preservation_reduction: "capital_preservation_reduction",
     capital_preservation_recovery: "capital_preservation_recovery",
+    loss_pot_equity: "loss_pot_equity",
+    loss_pot_general: "loss_pot_general",
   };
   
   // Select-Elemente (Dropdowns)
@@ -238,6 +246,8 @@ function getDefaultValues() {
     capital_preservation_threshold: 80,
     capital_preservation_reduction: 25,
     capital_preservation_recovery: 10,
+    loss_pot_equity: 0,
+    loss_pot_general: 0,
   };
 }
 
@@ -280,7 +290,24 @@ function exportToCsv(history, params = lastParams) {
     [],
   ];
   
-  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern", "Shortfall Entnahme", "Shortfall Steuer", "Vorabpauschale"];
+  const dataHeader = [
+    "Jahr",
+    "Monat",
+    "Phase",
+    "Tagesgeld",
+    "ETF",
+    "Gesamt",
+    "Gesamt (real)",
+    "Rendite",
+    "Entnahme",
+    "Steuern",
+    "Shortfall Entnahme",
+    "Shortfall Steuer",
+    "Vorabpauschale",
+    "Freibetrag genutzt (Jahr)",
+    "Aktien-Verlusttopf",
+    "Allg. Verlusttopf",
+  ];
   const dataRows = history.map(r => [
     r.year,
     r.month,
@@ -295,6 +322,9 @@ function exportToCsv(history, params = lastParams) {
     (r.shortfall || 0).toFixed(2),
     (r.tax_shortfall || 0).toFixed(2),
     (r.vorabpauschale_tax || 0).toFixed(2),
+    (r.yearly_used_freibetrag || 0).toFixed(2),
+    (r.loss_pot_equity || 0).toFixed(2),
+    (r.loss_pot_general || 0).toFixed(2),
   ]);
   
   const csvContent = [...settingsRows, dataHeader, ...dataRows].map(row => row.join(";")).join("\n");
@@ -364,6 +394,11 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     ["Endvermögen (schlechte Sequenz)", (results.sorr?.worstSequenceEnd || 0).toFixed(2)],
     ["Endvermögen (gute Sequenz)", (results.sorr?.bestSequenceEnd || 0).toFixed(2)],
     ["Kritisches Fenster", `Jahr 1-${results.sorr?.vulnerabilityWindow || 5}`],
+    [],
+    ["=== VERLUSTTÖPFE & FREIBETRAG (Endstände) ===", ""],
+    ["Aktien-Verlusttopf (Median)", results.medianFinalLossPotEquity.toFixed(2)],
+    ["Allg. Verlusttopf (Median)", results.medianFinalLossPotGeneral.toFixed(2)],
+    ["Freibetrag genutzt im letzten Jahr (Median)", results.medianFinalYearlyFreibetrag.toFixed(2)],
     [],
   ];
   
@@ -935,10 +970,27 @@ function consolidateLots(etfLots, priceTolerance = 0.01) {
 
 // ============ ETF SELLING (EXTRACTED) ============
 
-function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo = true) {
+/**
+ * Verkauft ETF-Anteile steueroptimiert mit Verlusttopf-Verrechnung.
+ * Reihenfolge: 1) Teilfreistellung → 2) Aktien-Verlusttopf → 3) Sparerpauschbetrag → 4) Steuer
+ * Bei Verlusten: Verlust (nach Teilfreistellung) erhöht den Aktien-Verlusttopf.
+ * 
+ * @param {number} remaining - Benötigter Netto-Betrag
+ * @param {Array} etfLots - Array von Lots {amount, price, monthIdx}
+ * @param {number} currentEtfPrice - Aktueller ETF-Preis
+ * @param {number} yearlyUsedFreibetrag - Bereits genutzter Freibetrag im Jahr
+ * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
+ * @param {number} taxRate - Effektiver Steuersatz
+ * @param {number} lossPotEquity - Aktien-Verlusttopf (Startwert)
+ * @param {boolean} useFifo - true = FIFO, false = LIFO
+ * @returns {Object} { remaining, taxPaid, yearlyUsedFreibetrag, lossPotEquity, grossProceeds, taxableGainTotal }
+ */
+function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotEquity = 0, useFifo = true) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
+  let lossPot = lossPotEquity;
   let grossProceeds = 0; // Brutto-Verkaufserlös für Vorabpauschale-Tracking
+  let taxableGainTotal = 0; // Steuerpflichtiger Gewinn/Verlust gesamt (nach Teilfreistellung)
   
   while (remaining > 0.01 && etfLots.length) {
     // FIFO: Erstes Element (ältestes Lot), LIFO: Letztes Element (neuestes Lot)
@@ -949,35 +1001,72 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     let sharesNeeded;
 
     if (gainPerShare > 0) {
+      // Gewinn: Berechne wie viele Shares wir verkaufen müssen
       const taxableGainPerShare = gainPerShare * TEILFREISTELLUNG;
-      const freibetragCoversShares = Math.min(
-        taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
+      
+      // Verlusttopf deckt wie viele Shares ab? (zuerst, banknah)
+      const lossPotCoversShares = Math.min(
+        taxableGainPerShare > 0 ? lossPot / taxableGainPerShare : Number.POSITIVE_INFINITY,
         lot.amount
       );
+      
+      // Freibetrag deckt wie viele zusätzliche Shares ab? (danach)
+      const freibetragCoversShares = Math.min(
+        taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
+        lot.amount - lossPotCoversShares
+      );
+      
+      const totalTaxFreeShares = lossPotCoversShares + freibetragCoversShares;
       const sharesIfTaxFree = remaining / currentEtfPrice;
 
-      if (sharesIfTaxFree <= freibetragCoversShares) {
+      if (sharesIfTaxFree <= totalTaxFreeShares) {
         sharesNeeded = sharesIfTaxFree;
       } else {
-        const netFromFreibetrag = freibetragCoversShares * currentEtfPrice;
-        const stillNeeded = remaining - netFromFreibetrag;
+        const netFromTaxFree = totalTaxFreeShares * currentEtfPrice;
+        const stillNeeded = remaining - netFromTaxFree;
         const taxPerShareFull = taxableGainPerShare * taxRate;
         const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
         if (netPerShareTaxed <= 0) break;
         const additionalShares = stillNeeded / netPerShareTaxed;
-        sharesNeeded = freibetragCoversShares + additionalShares;
+        sharesNeeded = totalTaxFreeShares + additionalShares;
       }
     } else {
+      // Verlust oder Break-Even: Keine Steuer, Verlust erhöht Verlusttopf
       sharesNeeded = remaining / currentEtfPrice;
     }
 
     const sharesToSell = Math.min(sharesNeeded, lot.amount);
     grossProceeds += sharesToSell * currentEtfPrice;
-    const totalGain = sharesToSell * gainPerShare * TEILFREISTELLUNG;
-    const taxableAfterFreibetrag = Math.max(0, totalGain - Math.max(0, sparerpauschbetrag - freibetragUsed));
-    // Nur positive Gewinne verbrauchen den Freibetrag (Verluste füllen ihn nicht auf)
-    freibetragUsed += Math.max(0, Math.min(totalGain, sparerpauschbetrag - freibetragUsed));
-    const partTax = taxableAfterFreibetrag * taxRate;
+    
+    // Brutto-Gewinn/Verlust des Lots
+    const bruttoGainLoss = sharesToSell * gainPerShare;
+    // Steuerpflichtiger Betrag nach Teilfreistellung
+    const taxableGainLoss = bruttoGainLoss * TEILFREISTELLUNG;
+    taxableGainTotal += taxableGainLoss;
+    
+    let partTax = 0;
+    
+    if (taxableGainLoss > 0) {
+      // GEWINN: Reihenfolge Verlusttopf → Sparerpauschbetrag → Steuer (banknah)
+      // 1. Verlusttopf nutzen
+      const usedLossPot = Math.min(taxableGainLoss, lossPot);
+      lossPot -= usedLossPot;
+      const afterLossPot = taxableGainLoss - usedLossPot;
+      
+      // 2. Sparerpauschbetrag nutzen
+      const currentRemainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
+      const usedFreibetrag = Math.min(afterLossPot, currentRemainingFreibetrag);
+      freibetragUsed += usedFreibetrag;
+      
+      // 3. Rest versteuern
+      const taxableAfterAll = afterLossPot - usedFreibetrag;
+      partTax = taxableAfterAll * taxRate;
+    } else if (taxableGainLoss < 0) {
+      // VERLUST: Erhöht den Aktien-Verlusttopf (bereits nach Teilfreistellung, d.h. 70% des Verlustes)
+      lossPot += Math.abs(taxableGainLoss);
+    }
+    // Bei 0: Keine Aktion
+    
     const partNet = sharesToSell * currentEtfPrice - partTax;
     remaining -= partNet;
     taxPaid += partTax;
@@ -994,16 +1083,36 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     }
   }
   
-  return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed, grossProceeds };
+  return { 
+    remaining, 
+    taxPaid, 
+    yearlyUsedFreibetrag: freibetragUsed, 
+    lossPotEquity: lossPot,
+    grossProceeds,
+    taxableGainTotal 
+  };
 }
 
-// Deckt Steuerzahlungen ab: zuerst TG, danach ETF-Verkauf inkl. Steuer auf realisierte Gewinne.
-// Liefert bezahlte Steuer (Original + Verkaufssteuer), aktualisiertes TG und Freibetrag sowie Shortfall.
-function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo = true) {
+/**
+ * Deckt Steuerzahlungen ab: zuerst TG, danach ETF-Verkauf inkl. Steuer auf realisierte Gewinne.
+ * Liefert bezahlte Steuer (Original + Verkaufssteuer), aktualisiertes TG, Freibetrag, Verlusttopf sowie Shortfall.
+ * 
+ * @param {number} taxAmount - Zu zahlende Steuer
+ * @param {number} savings - Tagesgeld-Guthaben
+ * @param {Array} etfLots - ETF-Lots
+ * @param {number} currentEtfPrice - Aktueller ETF-Preis
+ * @param {number} yearlyUsedFreibetrag - Genutzter Freibetrag im Jahr
+ * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
+ * @param {number} taxRate - Steuersatz
+ * @param {number} lossPotEquity - Aktien-Verlusttopf
+ * @param {boolean} useFifo - FIFO oder LIFO
+ */
+function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotEquity = 0, useFifo = true) {
   if (taxAmount <= 0) {
     return {
       savings,
       yearlyUsedFreibetrag,
+      lossPotEquity,
       taxPaidOriginal: 0,
       saleTax: 0,
       totalTaxRecorded: 0,
@@ -1012,6 +1121,7 @@ function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice,
   }
 
   let remainingTax = taxAmount;
+  let lossPot = lossPotEquity;
 
   const useCash = Math.min(savings, remainingTax);
   savings -= useCash;
@@ -1019,10 +1129,11 @@ function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice,
 
   let saleTax = 0;
   if (remainingTax > 0.01 && etfLots.length) {
-    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo);
+    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, useFifo);
     remainingTax = sellResult.remaining;
     saleTax = sellResult.taxPaid;
     yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+    lossPot = sellResult.lossPotEquity;
   }
 
   remainingTax = Math.max(0, remainingTax);
@@ -1033,6 +1144,7 @@ function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice,
   return {
     savings,
     yearlyUsedFreibetrag,
+    lossPotEquity: lossPot,
     taxPaidOriginal,
     saleTax,
     totalTaxRecorded,
@@ -1080,6 +1192,8 @@ function simulate(params, volatility = 0) {
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
     capital_preservation_recovery = 10,
+    loss_pot_equity: initialLossPotEquity = 0,
+    loss_pot_general: initialLossPotGeneral = 0,
   } = params;
   
   // Stochastic mode: volatility > 0 aktiviert Monte-Carlo-Modus
@@ -1134,6 +1248,12 @@ function simulate(params, volatility = 0) {
   let etfPriceAtYearStart = currentEtfPrice;
   let vorabpauschaleTaxYearly = 0;
   
+  // Verlusttöpfe: Fortlaufend, kein Reset am Jahreswechsel
+  // Aktien-Topf: Für ETF-Verkaufsgewinne/-verluste (nach Teilfreistellung)
+  // Allgemeiner Topf: Für Zinsen und Vorabpauschale
+  let lossPotEquity = initialLossPotEquity;
+  let lossPotGeneral = initialLossPotGeneral;
+  
   // JAHRESWEISE STEUERLOGIK: Tracking-Variablen
   // TG-Zinsen: Brutto ansammeln, am Jahresende versteuern
   let yearlyAccumulatedInterestGross = 0;
@@ -1163,14 +1283,22 @@ function simulate(params, volatility = 0) {
       yearlyUsedFreibetrag = 0; // Neues Jahr, Freibetrag zurücksetzen
       vorabpauschaleTaxYearly = 0;
       // ZUERST: Vorabpauschale des Vorjahres einziehen (falls vorhanden)
-      // Nutzt den Freibetrag des NEUEN Jahres (noch 0 verwendet)
+      // Reihenfolge: Allgemeiner Verlusttopf → Sparerpauschbetrag → Rest versteuern
       if (pendingVorabpauschaleAmount > 0) {
-        const remainingFreibetrag = sparerpauschbetrag; // Neues Jahr, noch nichts verbraucht
-        const taxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - remainingFreibetrag);
-        const freibetragUsed = Math.min(pendingVorabpauschaleAmount, remainingFreibetrag);
-        const dueTax = taxableAfterFreibetrag * taxRate;
+        // 1. Allgemeinen Verlusttopf nutzen
+        const usedLossPotGeneral = Math.min(pendingVorabpauschaleAmount, lossPotGeneral);
+        lossPotGeneral -= usedLossPotGeneral;
+        const afterLossPot = pendingVorabpauschaleAmount - usedLossPotGeneral;
+        
+        // 2. Sparerpauschbetrag nutzen (neues Jahr, noch voll verfügbar)
+        const remainingFreibetrag = sparerpauschbetrag;
+        const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
+        yearlyUsedFreibetrag = usedFreibetrag;
+        
+        // 3. Rest versteuern
+        const taxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
+        const dueTax = taxableAfterAll * taxRate;
 
-        yearlyUsedFreibetrag = freibetragUsed; // Freibetrag durch Vorabpauschale bereits teilweise verbraucht
         const coverResult = coverTaxWithSavingsAndEtf(
           dueTax,
           savings,
@@ -1179,10 +1307,12 @@ function simulate(params, volatility = 0) {
           yearlyUsedFreibetrag,
           sparerpauschbetrag,
           taxRate,
+          lossPotEquity,
           !use_lifo
         );
         savings = coverResult.savings;
         yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
+        lossPotEquity = coverResult.lossPotEquity;
         vorabpauschaleTaxPaidThisMonth = coverResult.taxPaidOriginal;
         vorabpauschaleTaxYearly = coverResult.taxPaidOriginal;
         taxPaidThisMonth += coverResult.totalTaxRecorded;
@@ -1285,10 +1415,11 @@ function simulate(params, volatility = 0) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotEquity, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        lossPotEquity = sellResult.lossPotEquity;
 
         // TG unter Ziel
         if (remaining > 0.01) {
@@ -1390,10 +1521,11 @@ function simulate(params, volatility = 0) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, !use_lifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotEquity, !use_lifo);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+        lossPotEquity = sellResult.lossPotEquity;
         // Verkaufserlöse NICHT abziehen - bereits versteuert!
 
         if (remaining > 0.01) {
@@ -1422,17 +1554,26 @@ function simulate(params, volatility = 0) {
     }
 
     // ============ JAHRESENDE-LOGIK (Dezember) ============
-    // 1. TG-Zinsen des Jahres besteuern (Freibetrag des AKTUELLEN Jahres)
+    // 1. TG-Zinsen des Jahres besteuern (Allg. Topf → Freibetrag des AKTUELLEN Jahres)
     // 2. Vorabpauschale berechnen, aber erst im Januar des Folgejahres einziehen
     let totalVorabpauschale = 0;
     if (monthInYear === 12) {
       // SCHRITT 1: Jährliche TG-Zinsen besteuern
-      // Die Zinsen wurden das ganze Jahr brutto angesammelt, jetzt Steuer abziehen
+      // Reihenfolge: Allgemeiner Verlusttopf → Sparerpauschbetrag → Rest versteuern (banknah)
       if (yearlyAccumulatedInterestGross > 0) {
+        // 1. Allgemeinen Verlusttopf nutzen (zuerst)
+        const usedLossPotGeneral = Math.min(yearlyAccumulatedInterestGross, lossPotGeneral);
+        lossPotGeneral -= usedLossPotGeneral;
+        const afterLossPot = yearlyAccumulatedInterestGross - usedLossPotGeneral;
+        
+        // 2. Sparerpauschbetrag nutzen (danach)
         const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-        const taxableInterest = Math.max(0, yearlyAccumulatedInterestGross - remainingFreibetrag);
-        savingsInterestTax = taxableInterest * taxRate;
-        yearlyUsedFreibetrag += Math.min(yearlyAccumulatedInterestGross, remainingFreibetrag);
+        const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
+        yearlyUsedFreibetrag += usedFreibetrag;
+        
+        // 3. Rest versteuern
+        const taxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
+        savingsInterestTax = taxableAfterAll * taxRate;
 
         if (savingsInterestTax > 0.01) {
           const coverResult = coverTaxWithSavingsAndEtf(
@@ -1443,10 +1584,12 @@ function simulate(params, volatility = 0) {
             yearlyUsedFreibetrag,
             sparerpauschbetrag,
             taxRate,
+            lossPotEquity,
             !use_lifo
           );
           savings = coverResult.savings;
           yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
+          lossPotEquity = coverResult.lossPotEquity;
           tax_paid += coverResult.totalTaxRecorded;
           taxShortfall += coverResult.shortfall;
         }
@@ -1566,6 +1709,9 @@ function simulate(params, volatility = 0) {
       portfolioReturn, // Portfolio-Gesamtrendite inkl. Cash (für SoRR-Analyse)
       cumulative_inflation: cumulativeInflation,
       capital_preservation_active: capitalPreservationActiveThisMonth || false,
+      yearly_used_freibetrag: yearlyUsedFreibetrag, // Im laufenden Steuerjahr genutzter Freibetrag
+      loss_pot_equity: lossPotEquity, // Aktien-Verlusttopf am Monatsende
+      loss_pot_general: lossPotGeneral, // Allgemeiner Verlusttopf am Monatsende
     });
   }
 
@@ -1573,21 +1719,33 @@ function simulate(params, volatility = 0) {
   // Falls die Simulation im Dezember endet, ist noch eine Vorabpauschale vorgemerkt,
   // die im Januar des Folgejahres fällig wäre. Diese muss noch berücksichtigt werden.
   if (pendingVorabpauschaleAmount > 0 && history.length > 0) {
-    // Steuer berechnen (Freibetrag des Folgejahres wäre voll verfügbar)
+    // Reihenfolge: Allgemeiner Verlusttopf → Sparerpauschbetrag → Rest versteuern
+    // 1. Allgemeinen Verlusttopf nutzen
+    const usedLossPotGeneral = Math.min(pendingVorabpauschaleAmount, lossPotGeneral);
+    lossPotGeneral -= usedLossPotGeneral;
+    const afterLossPot = pendingVorabpauschaleAmount - usedLossPotGeneral;
+    
+    // 2. Sparerpauschbetrag nutzen (neues Jahr, voll verfügbar)
     const finalRemainingFreibetrag = sparerpauschbetrag;
-    const finalTaxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - finalRemainingFreibetrag);
-    const finalVorabpauschaleTax = finalTaxableAfterFreibetrag * taxRate;
+    const usedFreibetrag = Math.min(afterLossPot, finalRemainingFreibetrag);
+    
+    // 3. Rest versteuern
+    const finalTaxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
+    const finalVorabpauschaleTax = finalTaxableAfterAll * taxRate;
+    
     const coverResult = coverTaxWithSavingsAndEtf(
       finalVorabpauschaleTax,
       savings,
       etfLots,
       currentEtfPrice,
-      0,
+      usedFreibetrag, // Freibetrag wurde durch VAP teilweise verbraucht
       sparerpauschbetrag,
       taxRate,
+      lossPotEquity,
       !use_lifo
     );
     savings = coverResult.savings;
+    lossPotEquity = coverResult.lossPotEquity;
     const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
     const updatedEtfValue = totalEtfShares * currentEtfPrice;
     
@@ -1602,6 +1760,8 @@ function simulate(params, volatility = 0) {
     lastEntry.vorabpauschale_tax = (lastEntry.vorabpauschale_tax || 0) + coverResult.taxPaidOriginal;
     // Speichere die pending Vorabpauschale-Steuer als Meta-Info
     lastEntry.pending_vorabpauschale_tax = coverResult.taxPaidOriginal;
+    lastEntry.loss_pot_equity = lossPotEquity;
+    lastEntry.loss_pot_general = lossPotGeneral;
     if (coverResult.shortfall > 0.01) {
       lastEntry.tax_shortfall = (lastEntry.tax_shortfall || 0) + coverResult.shortfall;
     }
@@ -1650,6 +1810,9 @@ function renderTable(history) {
       <td>${formatCurrency(yearReturn)}</td>
       <td>${formatCurrency(yearWithdrawal)}</td>
       <td>${formatCurrency(yearTax)}</td>
+      <td>${formatCurrency(lastRow.yearly_used_freibetrag || 0)}</td>
+      <td>${formatCurrency(lastRow.loss_pot_equity || 0)}</td>
+      <td>${formatCurrency(lastRow.loss_pot_general || 0)}</td>
     `;
     tableBody.appendChild(tr);
   };
@@ -2261,6 +2424,8 @@ form.addEventListener("submit", (e) => {
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
       capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
       capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+      loss_pot_equity: readNumber("loss_pot_equity", { min: 0 }),
+      loss_pot_general: readNumber("loss_pot_general", { min: 0 }),
     };
 
     lastHistory = simulate(params);
@@ -2758,6 +2923,10 @@ function analyzeMonteCarloResults(allHistories, params) {
   // Sammle Endvermögen
   const finalTotals = allHistories.map(h => h[h.length - 1]?.total || 0).sort((a, b) => a - b);
   const finalTotalsReal = allHistories.map(h => h[h.length - 1]?.total_real || 0).sort((a, b) => a - b);
+  // Sammle Verlusttöpfe & genutzten Freibetrag am Ende
+  const finalLossEquity = allHistories.map(h => h[h.length - 1]?.loss_pot_equity || 0).sort((a, b) => a - b);
+  const finalLossGeneral = allHistories.map(h => h[h.length - 1]?.loss_pot_general || 0).sort((a, b) => a - b);
+  const finalYearlyFreibetrag = allHistories.map(h => h[h.length - 1]?.yearly_used_freibetrag || 0).sort((a, b) => a - b);
   
   // Sequence-of-Returns Risk Analyse
   const sorr = analyzeSequenceOfReturnsRisk(allHistories, params);
@@ -3016,6 +3185,10 @@ function analyzeMonteCarloResults(allHistories, params) {
     medianTotalWithdrawalsReal,
     purchasingPowerLoss,
     realReturnPa,
+    // Verlusttöpfe & Freibetrag (Endstände, Median über alle Simulationen)
+    medianFinalLossPotEquity: percentile(finalLossEquity, 50),
+    medianFinalLossPotGeneral: percentile(finalLossGeneral, 50),
+    medianFinalYearlyFreibetrag: percentile(finalYearlyFreibetrag, 50),
     // Sequence-of-Returns Risk
     sorr,
   };
@@ -3477,6 +3650,8 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
       capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
       capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+      loss_pot_equity: readNumber("loss_pot_equity", { min: 0 }),
+      loss_pot_general: readNumber("loss_pot_general", { min: 0 }),
     };
     
     // Params für Export speichern
