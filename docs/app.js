@@ -2943,6 +2943,12 @@ function analyzeMonteCarloResults(allHistories, params) {
   let successCountStrict = 0;
   let successCountNominal = 0;
   let totalShortfallCount = 0; // Simulationen mit mindestens einem Shortfall
+  let ansparShortfallCount = 0; // Shortfalls NUR in Ansparphase
+  let entnahmeShortfallCount = 0; // Shortfalls NUR in Entnahmephase
+  
+  // Sinnvolle Shortfall-Toleranz: 1% der angeforderten Entnahme oder 50€, je nachdem was größer ist
+  const SHORTFALL_TOLERANCE_PERCENT = 0.01;
+  const SHORTFALL_TOLERANCE_ABS = 50;
   
   for (const history of allHistories) {
     const lastRow = history[history.length - 1];
@@ -2952,19 +2958,40 @@ function analyzeMonteCarloResults(allHistories, params) {
     const successThresholdNominal = SUCCESS_THRESHOLD_REAL * endInflation;
     const hasPositiveEnd = endWealth > successThresholdNominal;
     
-    // Prüfe auf Shortfalls über die GESAMTE Laufzeit (Anspar- + Entnahmephase)
-    // Shortfalls in der Ansparphase = Sonderausgaben konnten nicht vollständig gedeckt werden
-    let hasShortfall = false;
-    for (let m = 0; m < numMonths; m++) {
-      if ((history[m]?.shortfall || 0) > 0.01 || (history[m]?.tax_shortfall || 0) > 0.01) {
-        hasShortfall = true;
+    // Prüfe auf Shortfalls GETRENNT nach Phase
+    let hasAnsparShortfall = false;
+    let hasEntnahmeShortfall = false;
+    
+    // Ansparphase (0 bis savingsMonths-1)
+    for (let m = 0; m < savingsMonths && m < numMonths; m++) {
+      if ((history[m]?.shortfall || 0) > SHORTFALL_TOLERANCE_ABS || 
+          (history[m]?.tax_shortfall || 0) > SHORTFALL_TOLERANCE_ABS) {
+        hasAnsparShortfall = true;
         break;
       }
     }
     
+    // Entnahmephase (ab savingsMonths): Nutze relative Toleranz
+    for (let m = savingsMonths; m < numMonths; m++) {
+      const requested = history[m]?.withdrawal_requested || 0;
+      const shortfall = history[m]?.shortfall || 0;
+      const taxShortfall = history[m]?.tax_shortfall || 0;
+      const tolerance = Math.max(SHORTFALL_TOLERANCE_ABS, requested * SHORTFALL_TOLERANCE_PERCENT);
+      
+      if (shortfall > tolerance || taxShortfall > tolerance) {
+        hasEntnahmeShortfall = true;
+        break;
+      }
+    }
+    
+    const hasShortfall = hasAnsparShortfall || hasEntnahmeShortfall;
+    
     if (hasPositiveEnd) successCountNominal++;
-    if (hasPositiveEnd && !hasShortfall) successCountStrict++;
+    // Strenge Erfolgsrate: Nur Entnahme-Shortfalls zählen (Anspar-Shortfalls sind weniger kritisch)
+    if (hasPositiveEnd && !hasEntnahmeShortfall) successCountStrict++;
     if (hasShortfall) totalShortfallCount++;
+    if (hasAnsparShortfall) ansparShortfallCount++;
+    if (hasEntnahmeShortfall) entnahmeShortfallCount++;
   }
   
   // Strenge Erfolgsrate: Keine Shortfalls UND positives Endvermögen (real)
@@ -3143,9 +3170,11 @@ function analyzeMonteCarloResults(allHistories, params) {
   
   return {
     iterations: numSims,
-    successRate, // Strenge Rate: Keine Shortfalls UND positives Endvermögen
+    successRate, // Strenge Rate: Keine Entnahme-Shortfalls UND positives Endvermögen
     successRateNominal, // Nur positives Endvermögen (alte Definition)
-    shortfallRate, // Anteil mit mindestens einem Shortfall
+    shortfallRate, // Anteil mit mindestens einem Shortfall (gesamt)
+    ansparShortfallRate: (ansparShortfallCount / numSims) * 100,
+    entnahmeShortfallRate: (entnahmeShortfallCount / numSims) * 100,
     finalTotals,
     finalTotalsReal,
     percentiles,
@@ -3199,14 +3228,19 @@ function renderMonteCarloStats(results) {
   // Zeige strenge Erfolgsrate (keine Shortfalls)
   successEl.textContent = `${results.successRate.toFixed(1)}%`;
   
-  // Shortfall-Rate anzeigen (falls Element existiert)
+  // Shortfall-Rate anzeigen (Entnahmephase ist kritischer, daher Fokus darauf)
   const shortfallEl = document.getElementById("mc-shortfall-rate");
   if (shortfallEl) {
-    shortfallEl.textContent = `${results.shortfallRate.toFixed(1)}%`;
+    // Zeige primär Entnahme-Shortfalls, da diese kritischer sind
+    const entnahmeRate = results.entnahmeShortfallRate || 0;
+    const ansparRate = results.ansparShortfallRate || 0;
+    shortfallEl.textContent = `${entnahmeRate.toFixed(1)}%`;
+    // Tooltip mit Details
+    shortfallEl.title = `Entnahme: ${entnahmeRate.toFixed(1)}% | Anspar: ${ansparRate.toFixed(1)}%`;
     shortfallEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
-    if (results.shortfallRate <= 5) {
+    if (entnahmeRate <= 5) {
       shortfallEl.classList.add("stat-value--success");
-    } else if (results.shortfallRate <= 20) {
+    } else if (entnahmeRate <= 20) {
       shortfallEl.classList.add("stat-value--warning");
     } else {
       shortfallEl.classList.add("stat-value--danger");
@@ -3585,6 +3619,38 @@ function renderMonteCarloGraph(results) {
   });
   ctx.stroke();
   ctx.setLineDash([]);
+  
+  // Ruin-Marker: Markiere Zeitpunkte, an denen P5 oder P10 auf 0/nahe 0 fallen
+  // Damit Ruin trotz Log-Skala sichtbar bleibt
+  if (effectiveLogScale && hasZeroScenarios) {
+    ctx.fillStyle = "rgba(239, 68, 68, 0.7)"; // Rot für Ruin
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
+    ctx.lineWidth = 2;
+    
+    activePercentiles.p5.forEach((val, i) => {
+      if (val <= LOG_FLOOR) {
+        const [x, y] = toXY(i, LOG_FLOOR);
+        // Dreieck-Marker nach unten zeigend (Warnsymbol)
+        ctx.beginPath();
+        ctx.moveTo(x, y + 6);
+        ctx.lineTo(x - 5, y - 4);
+        ctx.lineTo(x + 5, y - 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+    });
+    
+    // Hinweis-Text bei erstem Ruin-Punkt
+    const firstRuinIdx = activePercentiles.p5.findIndex(v => v <= LOG_FLOOR);
+    if (firstRuinIdx >= 0) {
+      const [x, y] = toXY(firstRuinIdx, LOG_FLOOR);
+      ctx.font = "11px 'Segoe UI', sans-serif";
+      ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("⚠ Pleite-Szenarien", x + 8, y - 2);
+    }
+  }
   
   // Phasen-Trennung
   const switchIdx = savingsYears * MONTHS_PER_YEAR;
