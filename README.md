@@ -6,7 +6,7 @@ Ein interaktiver Simulator für langfristige Vermögensplanung mit ETFs und Tage
 
 ## Features
 
-- **Steueroptimierung (Depot-Trick)**: Verkauf jüngster Anteile zuerst (LIFO) für minimale Steuerlast
+- **Steueroptimierung**: Standard ist gesetzeskonformes FIFO (First In, First Out), optional LIFO nur zur Analyse
 - **Teilfreistellung**: 30% der ETF-Gewinne steuerfrei (§ 20 Abs. 1 InvStG)
 - **Sparerpauschbetrag**: 1.000 EUR/Jahr automatisch berücksichtigt
 - **Dynamische Sparraten**: Jährliche Gehaltserhöhung einplanbar
@@ -22,8 +22,10 @@ Ein interaktiver Simulator für langfristige Vermögensplanung mit ETFs und Tage
 | Teilfreistellung | 30% | Für Aktienfonds (>51% Aktienanteil) |
 | Sparerpauschbetrag | 1.000 € | Pro Person/Jahr |
 
-### Depot-Trick (LIFO)
-Der Simulator verkauft automatisch die **jüngsten** ETF-Anteile zuerst. Diese haben typischerweise geringere Gewinne und damit niedrigere Steuerlast als ältere Anteile.
+### Verkaufsreihenfolge (FIFO/LIFO)
+**Standard: FIFO (First In, First Out)** – Die ältesten Anteile werden zuerst verkauft. Dies ist für Privatanleger in Deutschland gesetzlich vorgeschrieben (§ 20 Abs. 4 EStG).
+
+**Optional: LIFO (Last In, First Out)** – Die jüngsten Anteile werden zuerst verkauft. Diese Option ist **nur zur Analyse/Vergleich** gedacht und **nicht gesetzeskonform** für Privatanleger.
 
 ## Installation & Nutzung
 

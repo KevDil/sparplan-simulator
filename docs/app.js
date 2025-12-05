@@ -1,3 +1,25 @@
+/**
+ * ETF Sparplan Simulator - Steuermodell und Vereinfachungen
+ * 
+ * MODELLVEREINFACHUNGEN:
+ * - Nur thesaurierende Aktienfonds modelliert (keine Ausschüttungen)
+ * - Teilfreistellung fix 70% steuerpflichtig (30% frei, § 20 InvStG) – nur für Aktienfonds korrekt
+ *   (Mischfonds: 15% frei, Rentenfonds: 0% frei – hier nicht implementiert)
+ * - Vorabpauschale wird im Dezember berechnet/abgezogen, real ist sie im Januar des Folgejahres fällig
+ * - Tagesgeldzinsen werden monatlich besteuert; Broker rechnen i.d.R. jährlich
+ * - Verlustverrechnung vereinfacht (kein Verlustvortrag über Jahre, keine Verlustverrechnungstöpfe)
+ * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
+ * 
+ * STEUERBERECHNUNG:
+ * - Basisertrag = Wert × Basiszins × 0,7 (§ 18 Abs. 1 InvStG)
+ * - Vorabpauschale = min(Basisertrag, Wertzuwachs) 
+ * - Steuerpflichtig = Vorabpauschale × 0,7 (Teilfreistellung Aktienfonds, § 20 InvStG)
+ * 
+ * VERKAUFSREIHENFOLGE:
+ * - Standard: FIFO (gesetzlich vorgeschrieben, § 20 Abs. 4 EStG)
+ * - Optional: LIFO (nur zur Analyse, NICHT gesetzeskonform für Privatanleger)
+ */
+
 const TAX_RATE_BASE = 0.25; // Kapitalertragsteuer
 const SOLI_RATE = 0.055; // Solidaritätszuschlag auf KESt
 const TEILFREISTELLUNG = 0.7; // 30% steuerfrei bei Aktienfonds
@@ -1059,9 +1081,6 @@ function simulate(params, volatility = 0) {
   let etfValueYearStart = start_etf;
   let etfPriceAtYearStart = currentEtfPrice;
   let vorabpauschaleTaxYearly = 0;
-  // Nur Käufe (positive Zuflüsse) für Vorabpauschale-Berechnung
-  // WICHTIG: Verkäufe werden NICHT abgezogen, da Verkaufsgewinne bereits versteuert wurden
-  let etfNetPurchasesThisYear = 0;
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
@@ -1081,7 +1100,6 @@ function simulate(params, volatility = 0) {
       etfValueYearStart = totalEtfValueStart;
       etfPriceAtYearStart = currentEtfPrice;
       vorabpauschaleTaxYearly = 0;
-      etfNetPurchasesThisYear = 0;
     }
 
     // Wertentwicklung vor Cashflows
@@ -1148,7 +1166,6 @@ function simulate(params, volatility = 0) {
       if (etf_contrib > 0) {
         const newShares = etf_contrib / currentEtfPrice;
         etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
-        etfNetPurchasesThisYear += etf_contrib; // Nur Käufe für Vorabpauschale
       }
 
       // Sonderausgaben Ansparphase
@@ -1158,9 +1175,11 @@ function simulate(params, volatility = 0) {
 
       if (inSpecial) {
         // Inflationsanpassung der Sonderausgabe
+        // Verwende tatsächlich verstrichene Jahre (monthIdx/12) statt nullbasiertem yearIdx
         let specialAmount = special_payout_net_savings;
         if (inflation_adjust_special_savings) {
-          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+          const yearsElapsed = monthIdx / MONTHS_PER_YEAR;
+          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearsElapsed);
         }
         let remaining = specialAmount;
         withdrawal = remaining;
@@ -1177,8 +1196,6 @@ function simulate(params, volatility = 0) {
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        // Verkaufserlöse NICHT von etfNetPurchasesThisYear abziehen!
-        // Verkaufsgewinne wurden bereits versteuert, dürfen nicht nochmals in Vorabpauschale
 
         // TG unter Ziel
         if (remaining > 0.01) {
@@ -1259,9 +1276,11 @@ function simulate(params, volatility = 0) {
       if (special_interval_years_withdrawal > 0
         && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
         // Inflationsanpassung der Sonderausgabe
+        // Verwende tatsächlich verstrichene Jahre (monthIdx/12) statt nullbasiertem yearIdx
         specialExpenseThisMonth = special_payout_net_withdrawal;
         if (inflation_adjust_special_withdrawal) {
-          specialExpenseThisMonth = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearIdx);
+          const yearsElapsed = monthIdx / MONTHS_PER_YEAR;
+          specialExpenseThisMonth = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearsElapsed);
         }
         needed_net += specialExpenseThisMonth;
       }
@@ -1336,9 +1355,11 @@ function simulate(params, volatility = 0) {
         }
         
         // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
-        // KORRIGIERT: Nach § 18 InvStG muss die Teilfreistellung (0,7 für Aktienfonds) 
-        // bereits bei der Basisertrag-Berechnung angewendet werden, nicht erst bei der Besteuerung!
-        const lotBasisertrag = basisertragBase * (basiszins / 100) * TEILFREISTELLUNG * zeitanteil;
+        // HINWEIS: Der Faktor 0,7 ist der gesetzliche Dämpfungsfaktor nach § 18 Abs. 1 InvStG,
+        // NICHT die Teilfreistellung nach § 20 InvStG! Beide haben zufällig denselben Wert.
+        // Die Teilfreistellung (30% steuerfrei bei Aktienfonds) wird später bei der Besteuerung angewendet.
+        const BASISERTRAG_FAKTOR = 0.7; // § 18 Abs. 1 InvStG
+        const lotBasisertrag = basisertragBase * (basiszins / 100) * BASISERTRAG_FAKTOR * zeitanteil;
         
         // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
         const lotValueYearEnd = lot.amount * currentEtfPrice;
@@ -1358,7 +1379,8 @@ function simulate(params, volatility = 0) {
       }
       
       if (totalVorabpauschale > 0) {
-        // Teilfreistellung: nur 70% sind steuerpflichtig
+        // Teilfreistellung nach § 20 InvStG: Bei Aktienfonds sind 30% steuerfrei,
+        // d.h. nur 70% der Vorabpauschale sind steuerpflichtig.
         const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
         
         // Sparerpauschbetrag nutzen
