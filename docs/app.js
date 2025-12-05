@@ -1,12 +1,17 @@
 /**
  * ETF Sparplan Simulator - Steuermodell und Vereinfachungen
  * 
+ * STEUERMODELL (realitätsnah):
+ * - Vorabpauschale: Wird im Dezember berechnet, aber erst im Januar des Folgejahres eingezogen
+ *   → Nutzt den Sparerpauschbetrag des NEUEN Jahres (korrekt nach § 18 InvStG)
+ * - Tagesgeldzinsen: Brutto ansammeln, am Jahresende (Dezember) versteuern
+ *   → Nutzt den Sparerpauschbetrag des AKTUELLEN Jahres
+ * - Reihenfolge Freibetrag-Nutzung: TG-Zinsen (Dezember) → Vorabpauschale (Januar Folgejahr)
+ * 
  * MODELLVEREINFACHUNGEN:
  * - Nur thesaurierende Aktienfonds modelliert (keine Ausschüttungen)
  * - Teilfreistellung fix 70% steuerpflichtig (30% frei, § 20 InvStG) – nur für Aktienfonds korrekt
  *   (Mischfonds: 15% frei, Rentenfonds: 0% frei – hier nicht implementiert)
- * - Vorabpauschale wird im Dezember berechnet/abgezogen, real ist sie im Januar des Folgejahres fällig
- * - Tagesgeldzinsen werden monatlich besteuert; Broker rechnen i.d.R. jährlich
  * - Verlustverrechnung vereinfacht (kein Verlustvortrag über Jahre, keine Verlustverrechnungstöpfe)
  * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
  * 
@@ -1081,6 +1086,14 @@ function simulate(params, volatility = 0) {
   let etfValueYearStart = start_etf;
   let etfPriceAtYearStart = currentEtfPrice;
   let vorabpauschaleTaxYearly = 0;
+  
+  // JAHRESWEISE STEUERLOGIK: Tracking-Variablen
+  // TG-Zinsen: Brutto ansammeln, am Jahresende versteuern
+  let yearlyAccumulatedInterestGross = 0;
+  // Vorabpauschale: Im Dezember berechnen, im Januar des Folgejahres einziehen
+  // Nutzt Freibetrag des NEUEN Jahres (daher separate Speicherung)
+  let pendingVorabpauschaleTax = 0;           // Berechnete Steuer, fällig im Januar
+  let pendingVorabpauschaleAmount = 0;        // Steuerpflichtiger Betrag für Freibetrag-Berechnung
 
   for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
@@ -1093,13 +1106,36 @@ function simulate(params, volatility = 0) {
     const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
     const totalPortfolioStart = savings + totalEtfValueStart; // Für Portfolio-Rendite (SoRR)
 
-    // Neues Steuerjahr -> Freibetrag zurücksetzen und ETF-Wert/Preis am Jahresanfang speichern
+    // ============ JAHRESWECHSEL-LOGIK ============
+    // Am Jahresanfang (Januar): Vorabpauschale des Vorjahres einziehen
+    // Diese nutzt den Freibetrag des NEUEN Jahres
+    let vorabpauschaleTaxPaidThisMonth = 0;
     if (yearIdx !== currentTaxYear) {
+      // ZUERST: Vorabpauschale des Vorjahres einziehen (falls vorhanden)
+      // Nutzt den Freibetrag des NEUEN Jahres (noch 0 verwendet)
+      if (pendingVorabpauschaleAmount > 0) {
+        const remainingFreibetrag = sparerpauschbetrag; // Neues Jahr, noch nichts verbraucht
+        const taxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - remainingFreibetrag);
+        const freibetragUsed = Math.min(pendingVorabpauschaleAmount, remainingFreibetrag);
+        
+        vorabpauschaleTaxPaidThisMonth = taxableAfterFreibetrag * taxRate;
+        savings -= vorabpauschaleTaxPaidThisMonth;
+        if (savings < 0) savings = 0;
+        
+        yearlyUsedFreibetrag = freibetragUsed; // Freibetrag des neuen Jahres bereits teilweise verbraucht
+        vorabpauschaleTaxYearly = vorabpauschaleTaxPaidThisMonth;
+      } else {
+        yearlyUsedFreibetrag = 0;
+        vorabpauschaleTaxYearly = 0;
+      }
+      
+      // Dann: Jahreswechsel-Variablen zurücksetzen
       currentTaxYear = yearIdx;
-      yearlyUsedFreibetrag = 0;
       etfValueYearStart = totalEtfValueStart;
       etfPriceAtYearStart = currentEtfPrice;
-      vorabpauschaleTaxYearly = 0;
+      yearlyAccumulatedInterestGross = 0;
+      pendingVorabpauschaleTax = 0;
+      pendingVorabpauschaleAmount = 0;
     }
 
     // Wertentwicklung vor Cashflows
@@ -1121,23 +1157,17 @@ function simulate(params, volatility = 0) {
 
     const savingsInterest = savings * monthlySavingsRate;
     
-    // Tagesgeldzinsen besteuern (Freibetrag berücksichtigen)
-    let savingsInterestNet = savingsInterest;
+    // JAHRESWEISE STEUERLOGIK: TG-Zinsen brutto ansammeln
+    // Besteuerung erfolgt am Jahresende (Dezember), nicht monatlich
     let savingsInterestTax = 0;
-    if (savingsInterest > 0) {
-      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-      const taxableInterest = Math.max(0, savingsInterest - remainingFreibetrag);
-      savingsInterestTax = taxableInterest * taxRate;
-      savingsInterestNet = savingsInterest - savingsInterestTax;
-      yearlyUsedFreibetrag += Math.min(savingsInterest, remainingFreibetrag);
-    }
-    savings += savingsInterestNet;
+    yearlyAccumulatedInterestGross += savingsInterest;
+    savings += savingsInterest; // Zinsen brutto gutschreiben
 
     let savings_contrib = 0;
     let etf_contrib = 0;
     let overflow = 0;
     let withdrawal = 0;
-    let tax_paid = savingsInterestTax; // Startet mit TG-Zinsen-Steuer
+    let tax_paid = vorabpauschaleTaxPaidThisMonth; // Startet mit evtl. Vorabpauschale vom Januar
     let withdrawal_paid = 0;
     let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
     let capitalPreservationActiveThisMonth = false;
@@ -1328,76 +1358,84 @@ function simulate(params, volatility = 0) {
       }
     }
 
-    // ============ VORABPAUSCHALE (Dezember = Jahresende) ============
-    // Für thesaurierende ETFs wird die Vorabpauschale am Jahresende berechnet
-    // KORRIGIERT: Lot-basierte Berechnung mit Zeitanteilen und Cost-Basis-Erhöhung
-    let vorabpauschaleTax = 0;
+    // ============ JAHRESENDE-LOGIK (Dezember) ============
+    // 1. TG-Zinsen des Jahres besteuern (Freibetrag des AKTUELLEN Jahres)
+    // 2. Vorabpauschale berechnen, aber erst im Januar des Folgejahres einziehen
     let totalVorabpauschale = 0;
-    if (monthInYear === 12 && basiszins > 0) {
-      const yearStartMonth = yearIdx * MONTHS_PER_YEAR; // Monat 0, 12, 24, ...
-      
-      // Pro-Lot-Berechnung der Vorabpauschale
-      for (const lot of etfLots) {
-        if (lot.amount <= 0) continue;
+    if (monthInYear === 12) {
+      // SCHRITT 1: Jährliche TG-Zinsen besteuern
+      // Die Zinsen wurden das ganze Jahr brutto angesammelt, jetzt Steuer abziehen
+      if (yearlyAccumulatedInterestGross > 0) {
+        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
+        const taxableInterest = Math.max(0, yearlyAccumulatedInterestGross - remainingFreibetrag);
+        savingsInterestTax = taxableInterest * taxRate;
+        yearlyUsedFreibetrag += Math.min(yearlyAccumulatedInterestGross, remainingFreibetrag);
         
-        const boughtThisYear = lot.monthIdx > yearStartMonth;
-        
-        // Basisertrag-Grundlage: Wert am Jahresanfang (alte Lots) oder Kaufwert (neue Lots)
-        const basisertragBase = boughtThisYear 
-          ? lot.amount * lot.price  // Neue Lots: Kaufwert
-          : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
-        
-        // Zeitanteil: Für neue Lots nur anteilig (Kaufmonat bis Dezember) / 12
-        let zeitanteil = 1;
-        if (boughtThisYear) {
-          const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
-          zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
-        }
-        
-        // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
-        // HINWEIS: Der Faktor 0,7 ist der gesetzliche Dämpfungsfaktor nach § 18 Abs. 1 InvStG,
-        // NICHT die Teilfreistellung nach § 20 InvStG! Beide haben zufällig denselben Wert.
-        // Die Teilfreistellung (30% steuerfrei bei Aktienfonds) wird später bei der Besteuerung angewendet.
-        const BASISERTRAG_FAKTOR = 0.7; // § 18 Abs. 1 InvStG
-        const lotBasisertrag = basisertragBase * (basiszins / 100) * BASISERTRAG_FAKTOR * zeitanteil;
-        
-        // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
-        const lotValueYearEnd = lot.amount * currentEtfPrice;
-        const lotValueStart = boughtThisYear 
-          ? lot.amount * lot.price  // Neue Lots: Kaufwert
-          : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
-        const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
-        
-        // Vorabpauschale = min(Basisertrag, Wertzuwachs)
-        const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
-        
-        if (lotVorabpauschale > 0) {
-          totalVorabpauschale += lotVorabpauschale;
-          // Cost-Basis erhöhen (verhindert Doppelbesteuerung bei späterem Verkauf)
-          lot.price += lotVorabpauschale / lot.amount;
-        }
+        // Steuer vom Tagesgeld abziehen
+        savings -= savingsInterestTax;
+        if (savings < 0) savings = 0;
+        tax_paid += savingsInterestTax;
       }
       
-      if (totalVorabpauschale > 0) {
-        // Teilfreistellung nach § 20 InvStG: Bei Aktienfonds sind 30% steuerfrei,
-        // d.h. nur 70% der Vorabpauschale sind steuerpflichtig.
-        const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
+      // SCHRITT 2: Vorabpauschale berechnen (falls Basiszins > 0)
+      // Die Steuer wird NICHT jetzt eingezogen, sondern im Januar des Folgejahres
+      if (basiszins > 0) {
+        const yearStartMonth = yearIdx * MONTHS_PER_YEAR; // Monat 0, 12, 24, ...
         
-        // Sparerpauschbetrag nutzen
-        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-        const taxableAfterFreibetrag = Math.max(0, taxableVorabpauschale - remainingFreibetrag);
-        yearlyUsedFreibetrag += Math.min(taxableVorabpauschale, remainingFreibetrag);
+        // Pro-Lot-Berechnung der Vorabpauschale
+        for (const lot of etfLots) {
+          if (lot.amount <= 0) continue;
+          
+          const boughtThisYear = lot.monthIdx > yearStartMonth;
+          
+          // Basisertrag-Grundlage: Wert am Jahresanfang (alte Lots) oder Kaufwert (neue Lots)
+          const basisertragBase = boughtThisYear 
+            ? lot.amount * lot.price  // Neue Lots: Kaufwert
+            : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
+          
+          // Zeitanteil: Für neue Lots nur anteilig (Kaufmonat bis Dezember) / 12
+          let zeitanteil = 1;
+          if (boughtThisYear) {
+            const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
+            zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
+          }
+          
+          // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
+          // HINWEIS: Der Faktor 0,7 ist der gesetzliche Dämpfungsfaktor nach § 18 Abs. 1 InvStG,
+          // NICHT die Teilfreistellung nach § 20 InvStG! Beide haben zufällig denselben Wert.
+          const BASISERTRAG_FAKTOR = 0.7; // § 18 Abs. 1 InvStG
+          const lotBasisertrag = basisertragBase * (basiszins / 100) * BASISERTRAG_FAKTOR * zeitanteil;
+          
+          // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
+          const lotValueYearEnd = lot.amount * currentEtfPrice;
+          const lotValueStart = boughtThisYear 
+            ? lot.amount * lot.price  // Neue Lots: Kaufwert
+            : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
+          const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
+          
+          // Vorabpauschale = min(Basisertrag, Wertzuwachs)
+          const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
+          
+          if (lotVorabpauschale > 0) {
+            totalVorabpauschale += lotVorabpauschale;
+            // Cost-Basis erhöhen (verhindert Doppelbesteuerung bei späterem Verkauf)
+            lot.price += lotVorabpauschale / lot.amount;
+          }
+        }
         
-        // Steuer berechnen
-        vorabpauschaleTax = taxableAfterFreibetrag * taxRate;
-        vorabpauschaleTaxYearly = vorabpauschaleTax;
-        
-        // Steuer vom Tagesgeld abziehen (Broker zieht es vom Verrechnungskonto)
-        savings -= vorabpauschaleTax;
-        if (savings < 0) savings = 0;
+        if (totalVorabpauschale > 0) {
+          // Teilfreistellung nach § 20 InvStG: Bei Aktienfonds sind 30% steuerfrei,
+          // d.h. nur 70% der Vorabpauschale sind steuerpflichtig.
+          const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
+          
+          // WICHTIG: Steuer wird NICHT jetzt eingezogen!
+          // Stattdessen für Januar des Folgejahres vormerken
+          // Dort wird der Freibetrag des NEUEN Jahres genutzt
+          pendingVorabpauschaleAmount = taxableVorabpauschale;
+        }
       }
     }
-    tax_paid += vorabpauschaleTax;
+    // Hinweis: Vorabpauschale-Steuer wird im Januar des Folgejahres gezahlt (siehe Jahreswechsel-Logik)
     
     // Lot-Konsolidierung am Jahresende für Performance (alle 12 Monate)
     if (monthInYear === 12 && etfLots.length > 50) {
@@ -1444,7 +1482,7 @@ function simulate(params, volatility = 0) {
       monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
       monthly_payout_real: monthlyPayout / cumulativeInflation,
       tax_paid,
-      vorabpauschale_tax: vorabpauschaleTax,
+      vorabpauschale_tax: vorabpauschaleTaxPaidThisMonth, // Gezahlte Vorabpauschale-Steuer (im Januar)
       payout_value: effectivePayout,
       payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
       return_gain: etfGrowth + savingsInterest,
@@ -1453,6 +1491,30 @@ function simulate(params, volatility = 0) {
       cumulative_inflation: cumulativeInflation,
       capital_preservation_active: capitalPreservationActiveThisMonth || false,
     });
+  }
+
+  // ============ NACHBEARBEITUNG: Pending Vorabpauschale des letzten Jahres ============
+  // Falls die Simulation im Dezember endet, ist noch eine Vorabpauschale vorgemerkt,
+  // die im Januar des Folgejahres fällig wäre. Diese muss noch berücksichtigt werden.
+  if (pendingVorabpauschaleAmount > 0 && history.length > 0) {
+    // Steuer berechnen (Freibetrag des Folgejahres wäre voll verfügbar)
+    const finalRemainingFreibetrag = sparerpauschbetrag;
+    const finalTaxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - finalRemainingFreibetrag);
+    const finalVorabpauschaleTax = finalTaxableAfterFreibetrag * taxRate;
+    
+    // Letzten History-Eintrag aktualisieren (als "fällig im Folgejahr" markiert)
+    const lastEntry = history[history.length - 1];
+    lastEntry.savings -= finalVorabpauschaleTax;
+    if (lastEntry.savings < 0) lastEntry.savings = 0;
+    lastEntry.total = lastEntry.savings + lastEntry.etf; // Achtung: Property heißt 'etf', nicht 'etf_value'
+    lastEntry.total_real = lastEntry.total / lastEntry.cumulative_inflation;
+    lastEntry.tax_paid += finalVorabpauschaleTax;
+    // Speichere die pending Vorabpauschale-Steuer als Meta-Info
+    lastEntry.pending_vorabpauschale_tax = finalVorabpauschaleTax;
+    
+    // Auch savings-Variable aktualisieren (für konsistente Rückgabe)
+    savings -= finalVorabpauschaleTax;
+    if (savings < 0) savings = 0;
   }
 
   // Kapitalerhalt-Statistiken am Ende anhängen (als Meta-Info)
