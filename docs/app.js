@@ -15,8 +15,7 @@
  * - Verlustverrechnung vereinfacht (kein Verlustvortrag über Jahre, keine Verlustverrechnungstöpfe)
  * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
  * - Vorabpauschale-Liquidität: Bei Unterdeckung des Tagesgeldes wird die Steuer auf verfügbares
- *   Guthaben gekappt (kein automatischer ETF-Verkauf). In der Praxis würde die Depotbank
- *   ggf. Anteile zwangsverkaufen oder einen Dispo belasten.
+ *   Guthaben automatischer ETF-Verkauf, bei Totalausfall Shortfall-Flag (keine Dispo-Aufnahme).
  * 
  * STEUERBERECHNUNG:
  * - Basisertrag = Wert × Basiszins × 0,7 (§ 18 Abs. 1 InvStG)
@@ -280,8 +279,8 @@ function exportToCsv(history, params = lastParams) {
     ...Object.entries(params).map(([key, val]) => [key, val ?? ""]),
     [],
   ];
-
-  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern", "Vorabpauschale"];
+  
+  const dataHeader = ["Jahr", "Monat", "Phase", "Tagesgeld", "ETF", "Gesamt", "Gesamt (real)", "Rendite", "Entnahme", "Steuern", "Shortfall Entnahme", "Shortfall Steuer", "Vorabpauschale"];
   const dataRows = history.map(r => [
     r.year,
     r.month,
@@ -293,6 +292,8 @@ function exportToCsv(history, params = lastParams) {
     (r.return_gain || 0).toFixed(2),
     (r.withdrawal || 0).toFixed(2),
     (r.tax_paid || 0).toFixed(2),
+    (r.shortfall || 0).toFixed(2),
+    (r.tax_shortfall || 0).toFixed(2),
     (r.vorabpauschale_tax || 0).toFixed(2),
   ]);
   
@@ -996,6 +997,49 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
   return { remaining, taxPaid, yearlyUsedFreibetrag: freibetragUsed, grossProceeds };
 }
 
+// Deckt Steuerzahlungen ab: zuerst TG, danach ETF-Verkauf inkl. Steuer auf realisierte Gewinne.
+// Liefert bezahlte Steuer (Original + Verkaufssteuer), aktualisiertes TG und Freibetrag sowie Shortfall.
+function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo = true) {
+  if (taxAmount <= 0) {
+    return {
+      savings,
+      yearlyUsedFreibetrag,
+      taxPaidOriginal: 0,
+      saleTax: 0,
+      totalTaxRecorded: 0,
+      shortfall: 0,
+    };
+  }
+
+  let remainingTax = taxAmount;
+
+  const useCash = Math.min(savings, remainingTax);
+  savings -= useCash;
+  remainingTax -= useCash;
+
+  let saleTax = 0;
+  if (remainingTax > 0.01 && etfLots.length) {
+    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, useFifo);
+    remainingTax = sellResult.remaining;
+    saleTax = sellResult.taxPaid;
+    yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+  }
+
+  remainingTax = Math.max(0, remainingTax);
+  const taxPaidOriginal = taxAmount - remainingTax;
+  const shortfall = remainingTax > 0.01 ? remainingTax : 0;
+  const totalTaxRecorded = taxPaidOriginal + saleTax;
+
+  return {
+    savings,
+    yearlyUsedFreibetrag,
+    taxPaidOriginal,
+    saleTax,
+    totalTaxRecorded,
+    shortfall,
+  };
+}
+
 /**
  * Unified simulation function for both standard and Monte-Carlo simulations.
  * @param {Object} params - Simulation parameters
@@ -1102,6 +1146,9 @@ function simulate(params, volatility = 0) {
     const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
     const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
     const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
+    let vorabpauschaleTaxPaidThisMonth = 0;
+    let taxPaidThisMonth = 0;
+    let taxShortfall = 0;
     
     // Inflation kumulieren
     cumulativeInflation *= (1 + monthlyInflationRate);
@@ -1112,23 +1159,34 @@ function simulate(params, volatility = 0) {
     // ============ JAHRESWECHSEL-LOGIK ============
     // Am Jahresanfang (Januar): Vorabpauschale des Vorjahres einziehen
     // Diese nutzt den Freibetrag des NEUEN Jahres
-    let vorabpauschaleTaxPaidThisMonth = 0;
     if (yearIdx !== currentTaxYear) {
+      yearlyUsedFreibetrag = 0; // Neues Jahr, Freibetrag zurücksetzen
+      vorabpauschaleTaxYearly = 0;
       // ZUERST: Vorabpauschale des Vorjahres einziehen (falls vorhanden)
       // Nutzt den Freibetrag des NEUEN Jahres (noch 0 verwendet)
       if (pendingVorabpauschaleAmount > 0) {
         const remainingFreibetrag = sparerpauschbetrag; // Neues Jahr, noch nichts verbraucht
         const taxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - remainingFreibetrag);
         const freibetragUsed = Math.min(pendingVorabpauschaleAmount, remainingFreibetrag);
-        
-        vorabpauschaleTaxPaidThisMonth = taxableAfterFreibetrag * taxRate;
-        savings -= vorabpauschaleTaxPaidThisMonth;
-        // VEREINFACHUNG: Bei Unterdeckung wird auf 0 gekappt (kein ETF-Verkauf)
-        // In der Praxis würde die Bank ggf. Anteile zwangsverkaufen
-        if (savings < 0) savings = 0;
-        
-        yearlyUsedFreibetrag = freibetragUsed; // Freibetrag des neuen Jahres bereits teilweise verbraucht
-        vorabpauschaleTaxYearly = vorabpauschaleTaxPaidThisMonth;
+        const dueTax = taxableAfterFreibetrag * taxRate;
+
+        yearlyUsedFreibetrag = freibetragUsed; // Freibetrag durch Vorabpauschale bereits teilweise verbraucht
+        const coverResult = coverTaxWithSavingsAndEtf(
+          dueTax,
+          savings,
+          etfLots,
+          currentEtfPrice,
+          yearlyUsedFreibetrag,
+          sparerpauschbetrag,
+          taxRate,
+          !use_lifo
+        );
+        savings = coverResult.savings;
+        yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
+        vorabpauschaleTaxPaidThisMonth = coverResult.taxPaidOriginal;
+        vorabpauschaleTaxYearly = coverResult.taxPaidOriginal;
+        taxPaidThisMonth += coverResult.totalTaxRecorded;
+        taxShortfall += coverResult.shortfall;
       } else {
         yearlyUsedFreibetrag = 0;
         vorabpauschaleTaxYearly = 0;
@@ -1172,7 +1230,7 @@ function simulate(params, volatility = 0) {
     let etf_contrib = 0;
     let overflow = 0;
     let withdrawal = 0;
-    let tax_paid = vorabpauschaleTaxPaidThisMonth; // Startet mit evtl. Vorabpauschale vom Januar
+    let tax_paid = taxPaidThisMonth; // Startet mit evtl. Vorabpauschale vom Januar (inkl. Verkaufssteuer)
     let withdrawal_paid = 0;
     let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
     let capitalPreservationActiveThisMonth = false;
@@ -1375,11 +1433,23 @@ function simulate(params, volatility = 0) {
         const taxableInterest = Math.max(0, yearlyAccumulatedInterestGross - remainingFreibetrag);
         savingsInterestTax = taxableInterest * taxRate;
         yearlyUsedFreibetrag += Math.min(yearlyAccumulatedInterestGross, remainingFreibetrag);
-        
-        // Steuer vom Tagesgeld abziehen
-        savings -= savingsInterestTax;
-        if (savings < 0) savings = 0;
-        tax_paid += savingsInterestTax;
+
+        if (savingsInterestTax > 0.01) {
+          const coverResult = coverTaxWithSavingsAndEtf(
+            savingsInterestTax,
+            savings,
+            etfLots,
+            currentEtfPrice,
+            yearlyUsedFreibetrag,
+            sparerpauschbetrag,
+            taxRate,
+            !use_lifo
+          );
+          savings = coverResult.savings;
+          yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
+          tax_paid += coverResult.totalTaxRecorded;
+          taxShortfall += coverResult.shortfall;
+        }
       }
       
       // SCHRITT 2: Vorabpauschale berechnen (falls Basiszins > 0)
@@ -1484,6 +1554,7 @@ function simulate(params, volatility = 0) {
       withdrawal_real: withdrawal_paid / cumulativeInflation,
       withdrawal_requested: withdrawal, // Für Shortfall-Analyse (MC)
       shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt (MC)
+      tax_shortfall: taxShortfall, // Steuer konnte nicht vollständig bezahlt werden
       monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
       monthly_payout_real: monthlyPayout / cumulativeInflation,
       tax_paid,
@@ -1506,22 +1577,36 @@ function simulate(params, volatility = 0) {
     const finalRemainingFreibetrag = sparerpauschbetrag;
     const finalTaxableAfterFreibetrag = Math.max(0, pendingVorabpauschaleAmount - finalRemainingFreibetrag);
     const finalVorabpauschaleTax = finalTaxableAfterFreibetrag * taxRate;
+    const coverResult = coverTaxWithSavingsAndEtf(
+      finalVorabpauschaleTax,
+      savings,
+      etfLots,
+      currentEtfPrice,
+      0,
+      sparerpauschbetrag,
+      taxRate,
+      !use_lifo
+    );
+    savings = coverResult.savings;
+    const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
+    const updatedEtfValue = totalEtfShares * currentEtfPrice;
     
     // Letzten History-Eintrag aktualisieren (als "fällig im Folgejahr" markiert)
     const lastEntry = history[history.length - 1];
-    lastEntry.savings -= finalVorabpauschaleTax;
-    // VEREINFACHUNG: Bei Unterdeckung wird auf 0 gekappt (kein ETF-Verkauf)
-    if (lastEntry.savings < 0) lastEntry.savings = 0;
+    lastEntry.savings = savings;
+    lastEntry.etf = updatedEtfValue; // Aktienbestand wurde evtl. verkauft
     lastEntry.total = lastEntry.savings + lastEntry.etf; // Achtung: Property heißt 'etf', nicht 'etf_value'
     lastEntry.total_real = lastEntry.total / lastEntry.cumulative_inflation;
-    lastEntry.tax_paid += finalVorabpauschaleTax;
+    lastEntry.tax_paid += coverResult.totalTaxRecorded;
     // Vorabpauschale-Steuer auch in vorabpauschale_tax addieren (für UI-Summe/CSV)
-    lastEntry.vorabpauschale_tax = (lastEntry.vorabpauschale_tax || 0) + finalVorabpauschaleTax;
+    lastEntry.vorabpauschale_tax = (lastEntry.vorabpauschale_tax || 0) + coverResult.taxPaidOriginal;
     // Speichere die pending Vorabpauschale-Steuer als Meta-Info
-    lastEntry.pending_vorabpauschale_tax = finalVorabpauschaleTax;
+    lastEntry.pending_vorabpauschale_tax = coverResult.taxPaidOriginal;
+    if (coverResult.shortfall > 0.01) {
+      lastEntry.tax_shortfall = (lastEntry.tax_shortfall || 0) + coverResult.shortfall;
+    }
     
     // Auch savings-Variable aktualisieren (für konsistente Rückgabe)
-    savings -= finalVorabpauschaleTax;
     if (savings < 0) savings = 0;
   }
 
@@ -1826,6 +1911,7 @@ function renderStats(history, params) {
   // Warnung bei Vermögensaufbrauch
   const warningEl = document.getElementById("stat-warning");
   if (warningEl) {
+    const taxShortfallMonths = history.filter(r => (r.tax_shortfall || 0) > 0.01).length;
     if (entnahmeRows.length > 0) {
       const startCapital = retirementWealth;
       const endCapital = lastRow.total;
@@ -1848,6 +1934,9 @@ function renderStats(history, params) {
       } else if (capitalRatio < 0.3) {
         warningEl.textContent = "\u26a0 Vermögen stark reduziert (< 30% des Startvermögens). Evtl. Entnahme anpassen.";
         warningEl.className = "stat-warning stat-warning--warning";
+      } else if (taxShortfallMonths > 0) {
+        warningEl.textContent = `\u26a0 Steuern konnten in ${taxShortfallMonths} Monaten nicht vollständig beglichen werden.`;
+        warningEl.className = "stat-warning stat-warning--warning";
       } else if (shortfallMonths > 0) {
         warningEl.textContent = `\u26a0 In ${shortfallMonths} Monaten konnte die gewünschte Entnahme nicht vollständig bedient werden.`;
         warningEl.className = "stat-warning stat-warning--warning";
@@ -1856,8 +1945,13 @@ function renderStats(history, params) {
         warningEl.className = "stat-warning stat-warning--ok";
       }
     } else {
-      warningEl.textContent = "";
-      warningEl.className = "stat-warning";
+      if (taxShortfallMonths > 0) {
+        warningEl.textContent = `\u26a0 Steuern konnten in ${taxShortfallMonths} Monaten nicht vollständig beglichen werden.`;
+        warningEl.className = "stat-warning stat-warning--warning";
+      } else {
+        warningEl.textContent = "";
+        warningEl.className = "stat-warning";
+      }
     }
   }
 }
@@ -2663,7 +2757,7 @@ function analyzeMonteCarloResults(allHistories, params) {
     // Shortfalls in der Ansparphase = Sonderausgaben konnten nicht vollständig gedeckt werden
     let hasShortfall = false;
     for (let m = 0; m < numMonths; m++) {
-      if ((history[m]?.shortfall || 0) > 0.01) {
+      if ((history[m]?.shortfall || 0) > 0.01 || (history[m]?.tax_shortfall || 0) > 0.01) {
         hasShortfall = true;
         break;
       }
@@ -2712,7 +2806,8 @@ function analyzeMonteCarloResults(allHistories, params) {
     for (let m = 0; m < numMonths; m++) {
       const monthInflation = history[m]?.cumulative_inflation || 1;
       const ruinThresholdNominal = RUIN_THRESHOLD_REAL * monthInflation;
-      if ((history[m]?.total || 0) < ruinThresholdNominal || (history[m]?.shortfall || 0) > 0.01) {
+      const shortfallThisMonth = (history[m]?.shortfall || 0) > 0.01 || (history[m]?.tax_shortfall || 0) > 0.01;
+      if ((history[m]?.total || 0) < ruinThresholdNominal || shortfallThisMonth) {
         isRuin = true;
         break;
       }
