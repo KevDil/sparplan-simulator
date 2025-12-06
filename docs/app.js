@@ -2774,6 +2774,9 @@ updateRentModeFields();
 const infoModal = document.getElementById("info-modal");
 const btnInfo = document.getElementById("btn-info");
 const modalClose = document.getElementById("modal-close");
+const formulaModal = document.getElementById("formula-modal");
+const btnFormula = document.getElementById("btn-formula");
+const formulaModalClose = document.getElementById("formula-modal-close");
 
 function openInfoModal() {
   infoModal?.classList.add("active");
@@ -2785,18 +2788,39 @@ function closeInfoModal() {
   document.body.style.overflow = "";
 }
 
+function openFormulaModal() {
+  formulaModal?.classList.add("active");
+  document.body.style.overflow = "hidden";
+}
+
+function closeFormulaModal() {
+  formulaModal?.classList.remove("active");
+  document.body.style.overflow = "";
+}
+
 btnInfo?.addEventListener("click", openInfoModal);
 modalClose?.addEventListener("click", closeInfoModal);
+btnFormula?.addEventListener("click", openFormulaModal);
+formulaModalClose?.addEventListener("click", closeFormulaModal);
 
 // Schließen bei Klick außerhalb des Modals
 infoModal?.addEventListener("click", (e) => {
   if (e.target === infoModal) closeInfoModal();
 });
 
+formulaModal?.addEventListener("click", (e) => {
+  if (e.target === formulaModal) closeFormulaModal();
+});
+
 // Schließen mit Escape-Taste
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && infoModal?.classList.contains("active")) {
-    closeInfoModal();
+  if (e.key === "Escape") {
+    if (infoModal?.classList.contains("active")) {
+      closeInfoModal();
+    }
+    if (formulaModal?.classList.contains("active")) {
+      closeFormulaModal();
+    }
   }
 });
 

@@ -37,13 +37,22 @@
         <h1>Sparplan- & Entnahme-Simulator</h1>
       </div>
     </div>
-    <button class="btn-info" id="btn-info" title="Wie funktioniert die Simulation?">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M12 16v-4M12 8h.01"/>
-      </svg>
-      Wie funktioniert's?
-    </button>
+    <div class="topbar-actions">
+      <button class="btn-info" id="btn-info" title="Wie funktioniert die Simulation?">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <span>Wie funktioniert's?</span>
+      </button>
+      <button class="btn-info" id="btn-formula" title="Formel-Cheatsheet anzeigen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M7 12h10M9 8l-2 4 2 4"/>
+        </svg>
+        <span>Formel-Cheatsheet</span>
+      </button>
+    </div>
   </header>
 
   <!-- Info Modal -->
@@ -112,6 +121,72 @@
             <li>Deutsches Steuerrecht 2025 – inkl. allgemeinem Verlusttopf für ETFs, Zinsen und Vorabpauschale</li>
             <li>Inflation, TG-Zins und TER sind fix – nur ETF-Renditen variieren in Monte-Carlo</li>
             <li>Eingaben werden im Browser gespeichert, Export als CSV/PDF möglich</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Formel-Cheatsheet Modal -->
+  <div class="modal-overlay" id="formula-modal" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Formel-Cheatsheet</h2>
+        <button class="modal-close" id="formula-modal-close" aria-label="Schließen">&times;</button>
+      </div>
+      <div class="modal-body">
+        <section class="info-section">
+          <h3>📐 Zinsen &amp; Rendite</h3>
+          <ul>
+            <li><strong>Monatszins aus Jahreszins:</strong> <code>(1 + Jahreszins/100)^(1/12) - 1</code></li>
+            <li><strong>ETF-Rendite nach Kosten:</strong> <code>ETF-Rendite p.a. - TER p.a.</code></li>
+            <li><strong>Monatsrendite ETF:</strong> <code>(1 + effektive Rendite/100)^(1/12) - 1</code></li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🏦 Tagesgeld &amp; ETF</h3>
+          <ul>
+            <li><strong>Tagesgeld-Zinsen pro Monat:</strong> <code>Kontostand * Monatszins</code></li>
+            <li><strong>Neuer TG-Saldo:</strong> <code>alter Saldo + Zinsen + Einzahlungen - Entnahmen</code></li>
+            <li><strong>Gekaufte ETF-Anteile:</strong> <code>investierter Betrag / aktueller Kurs</code></li>
+            <li><strong>ETF-Wert:</strong> <code>Anzahl Anteile * Kurs</code></li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>📉 Inflation &amp; reale Werte</h3>
+          <ul>
+            <li><strong>Monatsinflation:</strong> <code>(1 + Inflation p.a./100)^(1/12) - 1</code></li>
+            <li><strong>Inflationsfaktor:</strong> wächst jeden Monat mit <code>1 + Monatsinflation</code></li>
+            <li><strong>Vermögen real:</strong> <code>Vermögen nominal / Inflationsfaktor</code></li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>💸 Entnahmephase</h3>
+          <ul>
+            <li><strong>Start-Rente (EUR-Modus):</strong> eingegebene Monatsrente</li>
+            <li><strong>Start-Rente (%-Modus):</strong> <code>Vermögen zum Rentenstart * Entnahme% / 12</code></li>
+            <li><strong>Rente Jahr n:</strong> <code>Start-Rente * (1 + Inflation p.a./100)^n</code></li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>💰 Steuern (vereinfacht)</h3>
+          <ul>
+            <li><strong>Effektiver Steuersatz ohne KiSt:</strong> ca. 26,375 %</li>
+            <li><strong>Sparerpauschbetrag:</strong> Gewinne/Zinsen bis 1.000/2.000 € pro Jahr steuerfrei</li>
+            <li><strong>Vorabpauschale Basisertrag:</strong> <code>Wert * Basiszins/100 * 0,7 * Zeitanteil</code></li>
+            <li><strong>Vorabpauschale:</strong> <code>min(Basisertrag, tatsächlicher Wertzuwachs)</code></li>
+          </ul>
+        </section>
+
+        <section class="info-section">
+          <h3>🎲 Monte-Carlo (Zufallsrenditen)</h3>
+          <ul>
+            <li><strong>Monatsvolatilität:</strong> <code>Jahresvola / √12</code></li>
+            <li><strong>Monatsrendite in Zufallssimulation:</strong> schwankt um die erwartete Monatsrendite mit obiger Volatilität</li>
           </ul>
         </section>
       </div>
