@@ -3266,12 +3266,12 @@ function renderMonteCarloStats(results) {
       `Anspar: ${ansparRate.toFixed(1)}%`,
       "Shortfall = Auszahlung mind. 1% oder 50€ unter Ziel (Anspar: >50€ Unterdeckung)"
     ].join("\n");
-    shortfallEl.title = shortfallDetails;
+    shortfallEl.removeAttribute("title"); // Verhindert doppelten Browser-Tooltip
     shortfallEl.setAttribute("aria-label", shortfallDetails);
     shortfallEl.setAttribute("data-tooltip", shortfallDetails);
     const shortfallHintEl = shortfallEl.closest(".stat-card")?.querySelector(".stat-hint");
     if (shortfallHintEl) {
-      shortfallHintEl.title = shortfallDetails;
+      shortfallHintEl.removeAttribute("title"); // Verhindert doppelten Browser-Tooltip
       shortfallHintEl.setAttribute("aria-label", shortfallDetails);
       shortfallHintEl.setAttribute("data-tooltip", shortfallDetails);
     }
