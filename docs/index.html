@@ -82,7 +82,7 @@
             <li><strong>Sparerpauschbetrag:</strong> 1.000€/2.000€ jährlich steuerfrei</li>
             <li><strong>Vorabpauschale:</strong> Jährliche Steuer auf thesaurierende ETFs (Basiszins × 0,7)</li>
             <li><strong>FIFO/LIFO:</strong> Verkaufsreihenfolge – FIFO ist gesetzlich vorgeschrieben, LIFO oft günstiger</li>
-            <li><strong>Verlusttöpfe:</strong> Aktien-Topf für ETF-Verkäufe (nach Teilfreistellung), Allgemeiner Topf für Zinsen/Vorabpauschale. Keine Kreuzverrechnung zwischen den Töpfen.</li>
+            <li><strong>Verlusttopf:</strong> Ein allgemeiner Topf für ETF-Gewinne/-Verluste (nach Teilfreistellung), Zinsen und Vorabpauschale. (Aktien-Topf nur für Einzelaktien, hier nicht modelliert.)</li>
           </ul>
         </section>
 
@@ -101,7 +101,7 @@
             <li><strong>Nominal vs. Real:</strong> Nominale Werte sind absolute Beträge, reale sind kaufkraftbereinigt</li>
             <li><strong>Effektive Entnahmerate:</strong> Tatsächliche jährliche Entnahme in % des Startvermögens</li>
             <li><strong>Kapitalerhalt-Rate:</strong> % der MC-Simulationen mit Endvermögen ≥ Startvermögen</li>
-            <li><strong>Pleite-Risiko:</strong> % mit Vermögen &lt;10.000€ oder Engpass während der Laufzeit</li>
+            <li><strong>Pleite-Risiko:</strong> % mit Vermögen unter Ruin-Schwelle (Standard: 10% des Rentenstarts) oder Shortfall in Entnahmephase</li>
           </ul>
         </section>
 
@@ -109,7 +109,7 @@
           <h3>⚠️ Hinweise</h3>
           <ul>
             <li>Simulation ≠ Vorhersage – historische Renditen garantieren keine zukünftigen Ergebnisse</li>
-            <li>Deutsches Steuerrecht 2025 – inkl. Verlustverrechnungstöpfe (Aktien-Topf / Allgemeiner Topf)</li>
+            <li>Deutsches Steuerrecht 2025 – inkl. allgemeinem Verlusttopf für ETFs, Zinsen und Vorabpauschale</li>
             <li>Inflation, TG-Zins und TER sind fix – nur ETF-Renditen variieren in Monte-Carlo</li>
             <li>Eingaben werden im Browser gespeichert, Export als CSV/PDF möglich</li>
           </ul>
@@ -179,14 +179,9 @@
               <small class="field-hint">2024: 2,29% | 2025: 2,53%</small>
             </label>
             <label class="field">
-              <span class="field-label" data-tooltip="Bestehender Aktien-Verlusttopf aus Vorjahren. Wird nur mit (teilfreigestellten) Gewinnen aus Aktien/ETF-Verkäufen verrechnet – nicht mit Zinsen oder Vorabpauschale.">Aktien-Verlusttopf (EUR)</span>
-              <input type="number" step="100" id="loss_pot_equity" value="0" min="0" max="10000000">
-              <small class="field-hint">Nur für Aktien-/ETF-Verkaufsgewinne</small>
-            </label>
-            <label class="field">
-              <span class="field-label" data-tooltip="Bestehender allgemeiner Verlusttopf aus Vorjahren. Wird mit Zinsen und Vorabpauschale verrechnet – nicht mit ETF-Verkaufsgewinnen.">Allgemeiner Verlusttopf (EUR)</span>
-              <input type="number" step="100" id="loss_pot_general" value="0" min="0" max="10000000">
-              <small class="field-hint">Für Zinsen &amp; Vorabpauschale</small>
+              <span class="field-label" data-tooltip="Bestehender allgemeiner Verlusttopf aus Vorjahren. Wird mit ETF-Gewinnen/-Verlusten, Zinsen und Vorabpauschale verrechnet. Nach deutschem Steuerrecht gehören ETFs in den allgemeinen Topf (Aktien-Topf nur für Einzelaktien).">Verlusttopf (EUR)</span>
+              <input type="number" step="100" id="loss_pot" value="0" min="0" max="10000000">
+              <small class="field-hint">Für ETFs, Zinsen &amp; Vorabpauschale</small>
             </label>
             <label class="field field--checkbox">
               <input type="checkbox" id="use_lifo">
@@ -332,6 +327,21 @@
             <label class="field field--checkbox">
               <input type="checkbox" id="mc_show_individual" unchecked>
               <span class="field-label" data-tooltip="Zeigt bis zu 50 einzelne Simulationspfade im Chart an, um die Streuung zu visualisieren.">Einzelne Pfade anzeigen (max. 50)</span>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Minimales Endvermögen (real/inflationsbereinigt) für 'Erfolg'. Pfade unter dieser Schwelle gelten als gescheitert.">Erfolgsschwelle (€ real)</span>
+              <input type="number" step="100" id="mc_success_threshold" value="100" min="0" max="1000000">
+              <small class="field-hint">Endvermögen > X€ real = Erfolg</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Ruin-Schwelle als % des Vermögens bei Rentenbeginn. Fällt das Vermögen in der Entnahmephase unter diesen Wert, gilt der Pfad als 'Ruin'.">Ruin-Schwelle (% Rentenbeginn)</span>
+              <input type="number" step="1" id="mc_ruin_threshold" value="10" min="1" max="50">
+              <small class="field-hint">Vermögen &lt; X% = Ruin</small>
+            </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Seed für Zufallsgenerator. Gleicher Seed = reproduzierbare Ergebnisse. 0 = zufällig.">Random Seed (0=zufällig)</span>
+              <input type="number" step="1" id="mc_seed" value="0" min="0" max="999999">
+              <small class="field-hint">Für reproduzierbare Simulationen</small>
             </label>
           </div>
         </div>
@@ -661,7 +671,7 @@
                 <div class="stat-card stat-card--mc">
                   <span class="stat-label">Pleite-Risiko (Pfad)</span>
                   <span class="stat-value" id="mc-ruin-probability">-</span>
-                  <small class="stat-hint">Vermögen &lt; 10% des Rentenstarts oder Shortfall in Entnahmephase</small>
+                  <small class="stat-hint">Vermögen unter Ruin-Schwelle oder Shortfall in Entnahmephase</small>
                 </div>
                 <div class="stat-card stat-card--mc">
                   <span class="stat-label">Shortfall-Quote (Entnahme)</span>
@@ -737,7 +747,7 @@
                 <div class="stat-card stat-card--mc">
                   <span class="stat-label">Pleite-Risiko (Pfad)</span>
                   <span class="stat-value" id="mc-ruin-probability-real">-</span>
-                  <small class="stat-hint">Vermögen &lt; 10% des Rentenstarts oder Shortfall in Entnahmephase</small>
+                  <small class="stat-hint">Vermögen unter Ruin-Schwelle oder Shortfall in Entnahmephase</small>
                 </div>
                 <div class="stat-card stat-card--mc">
                   <span class="stat-label">Reale Rendite p.a.</span>
@@ -820,8 +830,7 @@
                 <th>Entnahme</th>
                 <th>Steuern</th>
                 <th>Freibetrag genutzt</th>
-                <th>Aktien-Topf</th>
-                <th>Allg. Topf</th>
+                <th>Verlusttopf</th>
               </tr>
             </thead>
             <tbody></tbody>
