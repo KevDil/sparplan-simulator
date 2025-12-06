@@ -1454,8 +1454,10 @@ function simulate(params, volatility = 0) {
     let withdrawal = 0;
     let tax_paid = taxPaidThisMonth; // Startet mit evtl. Vorabpauschale vom Januar (inkl. Verkaufssteuer)
     let withdrawal_paid = 0;
+    let withdrawal_net = 0;
     let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
     let capitalPreservationActiveThisMonth = false;
+    let netWithdrawalThisMonth = 0;
 
     // ANSPARPHASE
     if (isSavingsPhase) {
@@ -1610,6 +1612,10 @@ function simulate(params, volatility = 0) {
           const use = Math.min(extraCash, remaining);
           savings -= use;
           remaining -= use;
+          // Netto-Entnahme aus TG (steuerfrei)
+          if (rent_is_gross) {
+            netWithdrawalThisMonth += use;
+          }
         }
 
         // ETF verkaufen - je nach Modus unterschiedliche Logik
@@ -1628,7 +1634,8 @@ function simulate(params, volatility = 0) {
           // Bei Brutto-Modus: withdrawal_paid = BRUTTO (was wir verkauft haben), nicht Netto!
           // Damit wird die Shortfall-Analyse korrekt: shortfall nur wenn remaining > 0
           withdrawal_paid = withdrawal - remaining;
-          // Speichere Netto separat für Statistiken
+          // Speichere Netto separat für Statistiken (Netto-Erlös nach Steuern)
+          netWithdrawalThisMonth += netReceived;
         } else if (remaining > 0) {
           // NETTO-MODUS (Standard): Verkaufe genug ETF um Netto-Betrag zu erhalten
           const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
@@ -1642,6 +1649,10 @@ function simulate(params, volatility = 0) {
           const draw = Math.min(savings, remaining);
           savings -= draw;
           remaining -= draw;
+          if (rent_is_gross) {
+            // Zusätzliche TG-Entnahme ist vollständig netto
+            netWithdrawalThisMonth += draw;
+          }
         }
 
         if (remaining < 0) {
@@ -1786,6 +1797,19 @@ function simulate(params, volatility = 0) {
     // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden (nur für MC relevant)
     const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
     
+    // Netto-Entnahme für Statistiken (unabhängig von Shortfall-Definition)
+    if (!isSavingsPhase && withdrawal > 0) {
+      if (rent_is_gross) {
+        // Im Brutto-Modus ist withdrawal_paid BRUTTO, netWithdrawalThisMonth ist Netto
+        withdrawal_net = netWithdrawalThisMonth;
+      } else {
+        // Im Netto-Modus entspricht withdrawal_paid bereits der Netto-Entnahme
+        withdrawal_net = withdrawal_paid;
+      }
+    } else {
+      withdrawal_net = 0;
+    }
+    
     // Portfolio-Gesamtrendite (gewichtet nach ETF/Cash-Anteil am Periodenstart)
     const savingsReturnFactor = 1 + monthlySavingsRate;
     let portfolioReturn = monthlyEtfReturn;
@@ -1808,6 +1832,8 @@ function simulate(params, volatility = 0) {
       savings_interest: savingsInterest,
       withdrawal: withdrawal_paid,
       withdrawal_real: withdrawal_paid / cumulativeInflation,
+      withdrawal_net,
+      withdrawal_net_real: withdrawal_net / cumulativeInflation,
       withdrawal_requested: withdrawal, // Für Shortfall-Analyse (MC)
       shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt (MC)
       tax_shortfall: taxShortfall, // Steuer konnte nicht vollständig bezahlt werden
@@ -3237,38 +3263,62 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   const meanEnd = finalTotals.reduce((a, b) => a + b, 0) / numSims;
   
   // Durchschnittliche monatliche Rente und Gesamtentnahmen berechnen
-  // KORRIGIERT: Nutze tatsächlich ausgezahlte Beträge (withdrawal), nicht gewünschte (monthly_payout)
-  const avgMonthlyWithdrawals = [];
-  const avgMonthlyWithdrawalsReal = [];
-  const totalWithdrawals = [];
-  const totalWithdrawalsReal = [];
+  // Brutto = withdrawal (tatsächlich aus Vermögen entnommener Betrag)
+  // Netto  = withdrawal_net (tatsächlich beim Nutzer ankommender Betrag nach Steuern)
+  const avgMonthlyWithdrawalsGross = [];
+  const avgMonthlyWithdrawalsGrossReal = [];
+  const avgMonthlyWithdrawalsNet = [];
+  const avgMonthlyWithdrawalsNetReal = [];
+  const totalWithdrawalsGross = [];
+  const totalWithdrawalsGrossReal = [];
+  const totalWithdrawalsNet = [];
+  const totalWithdrawalsNetReal = [];
   
   for (const history of allHistories) {
-    // Filter auf Entnahmephase mit tatsächlicher Auszahlung > 0
-    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && (r.withdrawal || 0) > 0);
-    if (entnahmeRows.length > 0) {
-      // KORRIGIERT: Nutze withdrawal (tatsächlich ausgezahlt), nicht monthly_payout (gewünscht)
-      const avgWithdrawal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal || 0), 0) / entnahmeRows.length;
-      const avgWithdrawalReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_real || 0), 0) / entnahmeRows.length;
-      avgMonthlyWithdrawals.push(avgWithdrawal);
-      avgMonthlyWithdrawalsReal.push(avgWithdrawalReal);
-      
-      const totalW = history.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
-      const totalWReal = history.reduce((sum, r) => sum + (r.withdrawal_real || r.withdrawal || 0), 0);
-      totalWithdrawals.push(totalW);
-      totalWithdrawalsReal.push(totalWReal);
-    }
+    // Filter auf Entnahmephase mit tatsächlicher Auszahlung > 0 (Brutto oder Netto)
+    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && (((r.withdrawal || 0) > 0) || ((r.withdrawal_net || 0) > 0)));
+    if (!entnahmeRows.length) continue;
+
+    // Brutto: tatsächliche Entnahme aus Vermögen (withdrawal)
+    const avgWithdrawalGross = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal || 0), 0) / entnahmeRows.length;
+    const avgWithdrawalGrossReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_real || 0), 0) / entnahmeRows.length;
+    avgMonthlyWithdrawalsGross.push(avgWithdrawalGross);
+    avgMonthlyWithdrawalsGrossReal.push(avgWithdrawalGrossReal);
+    
+    const totalGross = history.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
+    const totalGrossReal = history.reduce((sum, r) => sum + (r.withdrawal_real || r.withdrawal || 0), 0);
+    totalWithdrawalsGross.push(totalGross);
+    totalWithdrawalsGrossReal.push(totalGrossReal);
+
+    // Netto: tatsächlich ankommende Rente (withdrawal_net)
+    const avgWithdrawalNet = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_net || 0), 0) / entnahmeRows.length;
+    const avgWithdrawalNetReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_net_real || 0), 0) / entnahmeRows.length;
+    avgMonthlyWithdrawalsNet.push(avgWithdrawalNet);
+    avgMonthlyWithdrawalsNetReal.push(avgWithdrawalNetReal);
+
+    const totalNet = history.reduce((sum, r) => sum + (r.withdrawal_net || 0), 0);
+    const totalNetReal = history.reduce((sum, r) => sum + (r.withdrawal_net_real || r.withdrawal_net || 0), 0);
+    totalWithdrawalsNet.push(totalNet);
+    totalWithdrawalsNetReal.push(totalNetReal);
   }
   
-  avgMonthlyWithdrawals.sort((a, b) => a - b);
-  avgMonthlyWithdrawalsReal.sort((a, b) => a - b);
-  totalWithdrawals.sort((a, b) => a - b);
-  totalWithdrawalsReal.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGross.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGrossReal.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsNet.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsNetReal.sort((a, b) => a - b);
+  totalWithdrawalsGross.sort((a, b) => a - b);
+  totalWithdrawalsGrossReal.sort((a, b) => a - b);
+  totalWithdrawalsNet.sort((a, b) => a - b);
+  totalWithdrawalsNetReal.sort((a, b) => a - b);
   
-  const medianAvgMonthlyWithdrawal = avgMonthlyWithdrawals.length > 0 ? percentile(avgMonthlyWithdrawals, 50) : 0;
-  const medianAvgMonthlyWithdrawalReal = avgMonthlyWithdrawalsReal.length > 0 ? percentile(avgMonthlyWithdrawalsReal, 50) : 0;
-  const medianTotalWithdrawals = totalWithdrawals.length > 0 ? percentile(totalWithdrawals, 50) : 0;
-  const medianTotalWithdrawalsReal = totalWithdrawalsReal.length > 0 ? percentile(totalWithdrawalsReal, 50) : 0;
+  const medianAvgMonthlyWithdrawalGross = avgMonthlyWithdrawalsGross.length > 0 ? percentile(avgMonthlyWithdrawalsGross, 50) : 0;
+  const medianAvgMonthlyWithdrawalGrossReal = avgMonthlyWithdrawalsGrossReal.length > 0 ? percentile(avgMonthlyWithdrawalsGrossReal, 50) : 0;
+  const medianAvgMonthlyWithdrawalNet = avgMonthlyWithdrawalsNet.length > 0 ? percentile(avgMonthlyWithdrawalsNet, 50) : 0;
+  const medianAvgMonthlyWithdrawalNetReal = avgMonthlyWithdrawalsNetReal.length > 0 ? percentile(avgMonthlyWithdrawalsNetReal, 50) : 0;
+  const medianTotalWithdrawalsGross = totalWithdrawalsGross.length > 0 ? percentile(totalWithdrawalsGross, 50) : 0;
+  const medianTotalWithdrawalsGrossReal = totalWithdrawalsGrossReal.length > 0 ? percentile(totalWithdrawalsGrossReal, 50) : 0;
+  const medianTotalWithdrawalsNet = totalWithdrawalsNet.length > 0 ? percentile(totalWithdrawalsNet, 50) : 0;
+  const medianTotalWithdrawalsNetReal = totalWithdrawalsNetReal.length > 0 ? percentile(totalWithdrawalsNetReal, 50) : 0;
   
   // Kaufkraftverlust berechnen (basierend auf Inflationsrate und Gesamtlaufzeit)
   const totalMonths = numMonths;
@@ -3396,10 +3446,20 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
       50
     ),
     // Entnahme-Statistiken
-    medianAvgMonthlyWithdrawal,
-    medianAvgMonthlyWithdrawalReal,
-    medianTotalWithdrawals,
-    medianTotalWithdrawalsReal,
+    // Rückwärtskompatible Felder (Netto-Werte)
+    medianAvgMonthlyWithdrawal: medianAvgMonthlyWithdrawalNet,
+    medianAvgMonthlyWithdrawalReal: medianAvgMonthlyWithdrawalNetReal,
+    medianTotalWithdrawals: medianTotalWithdrawalsNet,
+    medianTotalWithdrawalsReal: medianTotalWithdrawalsNetReal,
+    // Explizite Trennung Netto / Brutto
+    medianAvgMonthlyWithdrawalNet,
+    medianAvgMonthlyWithdrawalNetReal,
+    medianTotalWithdrawalsNet,
+    medianTotalWithdrawalsNetReal,
+    medianAvgMonthlyWithdrawalGross,
+    medianAvgMonthlyWithdrawalGrossReal,
+    medianTotalWithdrawalsGross,
+    medianTotalWithdrawalsGrossReal,
     purchasingPowerLoss,
     realReturnPa,
     // Verlusttopf & Freibetrag (Endstände, Median über alle Simulationen)
@@ -3483,11 +3543,24 @@ function renderMonteCarloStats(results) {
   // Entnahme-Statistiken (nominal)
   const avgMonthlyEl = document.getElementById("mc-avg-monthly-withdrawal");
   if (avgMonthlyEl) {
-    avgMonthlyEl.textContent = formatCurrency(results.medianAvgMonthlyWithdrawal);
+    const net = (results.medianAvgMonthlyWithdrawalNet ?? results.medianAvgMonthlyWithdrawal) || 0;
+    const gross = (results.medianAvgMonthlyWithdrawalGross ?? results.medianAvgMonthlyWithdrawal) || 0;
+    if (gross > 0 && Math.abs(gross - net) > 0.01) {
+      avgMonthlyEl.textContent = `Netto: ${formatCurrency(net)} · Brutto: ${formatCurrency(gross)}`;
+    } else {
+      // Fallback: nur ein Wert oder beide (nahezu) identisch
+      avgMonthlyEl.textContent = formatCurrency(net || gross || 0);
+    }
   }
   const totalWithdrawalsEl = document.getElementById("mc-total-withdrawals");
   if (totalWithdrawalsEl) {
-    totalWithdrawalsEl.textContent = formatCurrency(results.medianTotalWithdrawals);
+    const netTotal = (results.medianTotalWithdrawalsNet ?? results.medianTotalWithdrawals) || 0;
+    const grossTotal = (results.medianTotalWithdrawalsGross ?? results.medianTotalWithdrawals) || 0;
+    if (grossTotal > 0 && Math.abs(grossTotal - netTotal) > 0.01) {
+      totalWithdrawalsEl.textContent = `Netto: ${formatCurrency(netTotal)} · Brutto: ${formatCurrency(grossTotal)}`;
+    } else {
+      totalWithdrawalsEl.textContent = formatCurrency(netTotal || grossTotal || 0);
+    }
   }
   
   // Inflationsbereinigte Werte (real)
@@ -3497,11 +3570,23 @@ function renderMonteCarloStats(results) {
   }
   const avgMonthlyRealEl = document.getElementById("mc-avg-monthly-withdrawal-real");
   if (avgMonthlyRealEl) {
-    avgMonthlyRealEl.textContent = formatCurrency(results.medianAvgMonthlyWithdrawalReal);
+    const netReal = (results.medianAvgMonthlyWithdrawalNetReal ?? results.medianAvgMonthlyWithdrawalReal) || 0;
+    const grossReal = (results.medianAvgMonthlyWithdrawalGrossReal ?? results.medianAvgMonthlyWithdrawalReal) || 0;
+    if (grossReal > 0 && Math.abs(grossReal - netReal) > 0.01) {
+      avgMonthlyRealEl.textContent = `Netto: ${formatCurrency(netReal)} · Brutto: ${formatCurrency(grossReal)}`;
+    } else {
+      avgMonthlyRealEl.textContent = formatCurrency(netReal || grossReal || 0);
+    }
   }
   const totalWithdrawalsRealEl = document.getElementById("mc-total-withdrawals-real");
   if (totalWithdrawalsRealEl) {
-    totalWithdrawalsRealEl.textContent = formatCurrency(results.medianTotalWithdrawalsReal);
+    const netTotalReal = (results.medianTotalWithdrawalsNetReal ?? results.medianTotalWithdrawalsReal) || 0;
+    const grossTotalReal = (results.medianTotalWithdrawalsGrossReal ?? results.medianTotalWithdrawalsReal) || 0;
+    if (grossTotalReal > 0 && Math.abs(grossTotalReal - netTotalReal) > 0.01) {
+      totalWithdrawalsRealEl.textContent = `Netto: ${formatCurrency(netTotalReal)} · Brutto: ${formatCurrency(grossTotalReal)}`;
+    } else {
+      totalWithdrawalsRealEl.textContent = formatCurrency(netTotalReal || grossTotalReal || 0);
+    }
   }
   const purchasingPowerLossEl = document.getElementById("mc-purchasing-power-loss");
   if (purchasingPowerLossEl) {
