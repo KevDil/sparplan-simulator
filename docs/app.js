@@ -1105,6 +1105,87 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
 }
 
 /**
+ * Verkauft ETF-Anteile für einen BRUTTO-Betrag (vor Steuern).
+ * Der Nutzer erhält den Brutto-Betrag abzüglich Steuern als Netto.
+ * @param {number} grossAmount - Gewünschter Brutto-Verkaufserlös
+ * @param {Array} etfLots - Array von Lots {amount, price, monthIdx}
+ * @param {number} currentEtfPrice - Aktueller ETF-Preis
+ * @param {number} yearlyUsedFreibetrag - Bereits genutzter Freibetrag im Jahr
+ * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
+ * @param {number} taxRate - Effektiver Steuersatz
+ * @param {number} lossPot - Allgemeiner Verlusttopf
+ * @param {boolean} useFifo - true = FIFO, false = LIFO
+ * @returns {Object} { netProceeds, taxPaid, yearlyUsedFreibetrag, lossPot, shortfall }
+ */
+function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true) {
+  let taxPaid = 0;
+  let freibetragUsed = yearlyUsedFreibetrag;
+  let lossPot = lossPotStart;
+  let grossRemaining = grossAmount;
+  let netProceeds = 0;
+  
+  while (grossRemaining > 0.01 && etfLots.length) {
+    const lotIndex = useFifo ? 0 : etfLots.length - 1;
+    const lot = etfLots[lotIndex];
+    const gainPerShare = currentEtfPrice - lot.price;
+    
+    // Berechne wie viele Shares wir für den Brutto-Betrag verkaufen müssen
+    const sharesNeeded = grossRemaining / currentEtfPrice;
+    const sharesToSell = Math.min(sharesNeeded, lot.amount);
+    const grossFromSale = sharesToSell * currentEtfPrice;
+    
+    // Gewinn/Verlust berechnen
+    const bruttoGainLoss = sharesToSell * gainPerShare;
+    const taxableGainLoss = bruttoGainLoss * TEILFREISTELLUNG;
+    
+    let partTax = 0;
+    
+    if (taxableGainLoss > 0) {
+      // GEWINN: Reihenfolge Verlusttopf → Sparerpauschbetrag → Steuer
+      const usedLossPot = Math.min(taxableGainLoss, lossPot);
+      lossPot -= usedLossPot;
+      const afterLossPot = taxableGainLoss - usedLossPot;
+      
+      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
+      const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
+      freibetragUsed += usedFreibetrag;
+      
+      const taxableAfterAll = afterLossPot - usedFreibetrag;
+      partTax = taxableAfterAll * taxRate;
+    } else if (taxableGainLoss < 0) {
+      // VERLUST: Erhöht den Verlusttopf
+      lossPot += Math.abs(taxableGainLoss);
+    }
+    
+    // Netto = Brutto - Steuer
+    const partNet = grossFromSale - partTax;
+    netProceeds += partNet;
+    taxPaid += partTax;
+    grossRemaining -= grossFromSale;
+    
+    if (sharesNeeded >= lot.amount) {
+      if (useFifo) {
+        etfLots.shift();
+      } else {
+        etfLots.pop();
+      }
+    } else {
+      lot.amount -= sharesToSell;
+    }
+  }
+  
+  const shortfall = grossRemaining > 0.01 ? grossRemaining : 0;
+  
+  return { 
+    netProceeds, 
+    taxPaid, 
+    yearlyUsedFreibetrag: freibetragUsed, 
+    lossPot,
+    shortfall
+  };
+}
+
+/**
  * Deckt Steuerzahlungen ab: zuerst TG, danach ETF-Verkauf inkl. Steuer auf realisierte Gewinne.
  * Liefert bezahlte Steuer (Original + Verkaufssteuer), aktualisiertes TG, Freibetrag, Verlusttopf sowie Shortfall.
  * 
@@ -1199,6 +1280,7 @@ function simulate(params, volatility = 0) {
     kirchensteuer = "keine",
     basiszins = 2.53,
     use_lifo = false,
+    rent_is_gross = false,
     capital_preservation_enabled = false,
     capital_preservation_threshold = 80,
     capital_preservation_reduction = 25,
@@ -1530,13 +1612,31 @@ function simulate(params, volatility = 0) {
           remaining -= use;
         }
 
-        // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
-        remaining = sellResult.remaining;
-        tax_paid += sellResult.taxPaid;
-        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        lossPot = sellResult.lossPot;
-        // Verkaufserlöse NICHT abziehen - bereits versteuert!
+        // ETF verkaufen - je nach Modus unterschiedliche Logik
+        if (rent_is_gross && remaining > 0) {
+          // BRUTTO-MODUS: Verkaufe ETF für Brutto-Betrag, Steuern werden abgezogen
+          // Nutzer erhält: Brutto - Steuer = Netto
+          // WICHTIG: Für Shortfall-Analyse zählt nur echter Shortfall (nicht genug Assets),
+          // NICHT die Steuerdifferenz zwischen Brutto und Netto!
+          const sellResult = sellEtfGross(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
+          const netReceived = sellResult.netProceeds;
+          tax_paid += sellResult.taxPaid;
+          yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+          lossPot = sellResult.lossPot;
+          // remaining = echter Shortfall (konnte nicht genug ETF verkaufen)
+          remaining = sellResult.shortfall;
+          // Bei Brutto-Modus: withdrawal_paid = BRUTTO (was wir verkauft haben), nicht Netto!
+          // Damit wird die Shortfall-Analyse korrekt: shortfall nur wenn remaining > 0
+          withdrawal_paid = withdrawal - remaining;
+          // Speichere Netto separat für Statistiken
+        } else if (remaining > 0) {
+          // NETTO-MODUS (Standard): Verkaufe genug ETF um Netto-Betrag zu erhalten
+          const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
+          remaining = sellResult.remaining;
+          tax_paid += sellResult.taxPaid;
+          yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
+          lossPot = sellResult.lossPot;
+        }
 
         if (remaining > 0.01) {
           const draw = Math.min(savings, remaining);
@@ -1549,7 +1649,10 @@ function simulate(params, volatility = 0) {
           remaining = 0;
         }
 
-        withdrawal_paid = withdrawal - Math.max(0, remaining);
+        // Bei Netto-Modus: Standard-Berechnung
+        if (!rent_is_gross) {
+          withdrawal_paid = withdrawal - Math.max(0, remaining);
+        }
       }
       
       // KORRIGIERT: Berechne tatsächlich gezahlte monatliche Entnahme (ohne Sonderausgaben)
@@ -2427,6 +2530,7 @@ form.addEventListener("submit", (e) => {
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
+      rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
       capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
       capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
@@ -2734,6 +2838,43 @@ function createSeededRandom(seed) {
   };
 }
 
+// Prüft Parameter auf historisch unrealistische Kombinationen
+function checkOptimisticParameters(params, volatility) {
+  const warnings = [];
+  const etfRate = params.etf_rate_pa || 6;
+  const ter = params.etf_ter_pa || 0;
+  const effectiveRate = etfRate - ter;
+  const withdrawalRate = params.monthly_payout_percent || 0;
+  const inflation = params.inflation_rate_pa || 2;
+  
+  // Rendite > 8% ist historisch optimistisch (MSCI World Durchschnitt ~7%)
+  if (effectiveRate > 8) {
+    warnings.push(`ETF-Rendite von ${effectiveRate.toFixed(1)}% ist optimistisch – historischer Durchschnitt liegt bei ~6-7% nach Kosten.`);
+  }
+  
+  // Niedrige Volatilität bei hoher Rendite
+  if (effectiveRate > 6 && volatility < 12) {
+    warnings.push(`Volatilität von ${volatility}% bei ${effectiveRate.toFixed(1)}% Rendite ist unrealistisch niedrig – Aktien-ETFs schwanken typisch 15-20%.`);
+  }
+  
+  // Hohe Entnahmerate
+  if (withdrawalRate > 4.5) {
+    warnings.push(`Entnahmerate von ${withdrawalRate}% p.a. ist aggressiv – die "sichere" 4%-Regel basiert auf 30 Jahren; längere Zeiträume erfordern niedrigere Raten.`);
+  }
+  
+  // Sehr hohe Rendite + hohe Entnahme = überkonfident
+  if (effectiveRate > 7 && withdrawalRate > 4) {
+    warnings.push(`Kombination aus ${effectiveRate.toFixed(1)}% Rendite und ${withdrawalRate}% Entnahme ist sehr optimistisch – plane konservativer.`);
+  }
+  
+  // Niedrige Inflation
+  if (inflation < 1.5) {
+    warnings.push(`Inflationsannahme von ${inflation}% liegt unter dem EZB-Ziel von 2% – reale Ergebnisse könnten schlechter sein.`);
+  }
+  
+  return warnings;
+}
+
 // Hauptfunktion für Monte-Carlo-Simulation
 async function runMonteCarloSimulation(params, iterations, volatility, showIndividual, mcOptions = {}) {
   // Switch to Monte-Carlo tab and show results
@@ -2741,6 +2882,19 @@ async function runMonteCarloSimulation(params, iterations, volatility, showIndiv
   
   if (mcEmptyStateEl) mcEmptyStateEl.style.display = "none";
   if (mcResultsEl) mcResultsEl.style.display = "block";
+  
+  // Prüfe auf optimistische Parameter und zeige Warnungen
+  const paramWarnings = checkOptimisticParameters(params, volatility);
+  const warningsEl = document.getElementById("mc-warnings");
+  const warningTextEl = document.getElementById("mc-warning-text");
+  if (warningsEl && warningTextEl) {
+    if (paramWarnings.length > 0) {
+      warningTextEl.innerHTML = paramWarnings.join("<br>");
+      warningsEl.style.display = "block";
+    } else {
+      warningsEl.style.display = "none";
+    }
+  }
   
   mcProgressEl.value = 0;
   mcProgressTextEl.textContent = "Starte...";
@@ -3048,9 +3202,10 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   const capitalPreservationRateReal = (capitalPreservationRealCount / numSims) * 100;
   
   // Pleite-Risiko: Vermögen fällt NUR IN DER ENTNAHMEPHASE unter X% des 
-  // Rentenbeginn-Vermögens ODER Shortfall tritt in Entnahmephase auf.
+  // Rentenbeginn-Vermögens ODER signifikanter Shortfall tritt in Entnahmephase auf.
   // Die Ansparphase wird ignoriert, da dort niedrige Vermögen normal sind.
   // RUIN_THRESHOLD_PERCENT wird oben aus mcOptions gelesen (Default: 10%)
+  // GEGLÄTTET: Shortfall muss signifikant sein (analog zu Shortfall-Toleranz)
   let ruinCount = 0;
   for (const history of allHistories) {
     let isRuin = false;
@@ -3060,9 +3215,16 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
     
     // NUR Entnahmephase prüfen (ab savingsMonths)
     for (let m = savingsMonths; m < numMonths; m++) {
-      const shortfallThisMonth = (history[m]?.shortfall || 0) > 0.01 || (history[m]?.tax_shortfall || 0) > 0.01;
+      // GEGLÄTTET: Nutze gleiche Toleranz wie bei Shortfall-Analyse
+      // Ruin nur bei SIGNIFIKANTEM Shortfall (max(50€, 1% der angeforderten Entnahme))
+      const requested = history[m]?.withdrawal_requested || 0;
+      const shortfallTolerance = Math.max(SHORTFALL_TOLERANCE_ABS, requested * SHORTFALL_TOLERANCE_PERCENT);
+      const shortfall = history[m]?.shortfall || 0;
+      const taxShortfall = history[m]?.tax_shortfall || 0;
+      const significantShortfall = shortfall > shortfallTolerance || taxShortfall > shortfallTolerance;
+      
       // Nominal prüfen, da Referenz auch nominal ist
-      if ((history[m]?.total || 0) < ruinThresholdAbsolute || shortfallThisMonth) {
+      if ((history[m]?.total || 0) < ruinThresholdAbsolute || significantShortfall) {
         isRuin = true;
         break;
       }
@@ -3253,6 +3415,19 @@ function renderMonteCarloStats(results) {
   // Zeige strenge Erfolgsrate (keine Shortfalls)
   successEl.textContent = `${results.successRate.toFixed(1)}%`;
   
+  // Soft-Erfolgsrate anzeigen (nur Endvermögen, ohne Shortfall-Prüfung)
+  const softSuccessEl = document.getElementById("mc-success-rate-soft");
+  if (softSuccessEl) {
+    softSuccessEl.textContent = `${results.successRateNominal.toFixed(1)}%`;
+  }
+  
+  // Dynamischer Erfolgsrate-Hinweis
+  const successHintEl = document.getElementById("mc-success-hint");
+  if (successHintEl && results.mcOptions) {
+    const threshold = results.mcOptions.successThreshold ?? 100;
+    successHintEl.textContent = `Keine Entnahme-Shortfalls & Endvermögen > ${threshold}€ real`;
+  }
+  
   // Shortfall-Rate anzeigen (Entnahmephase ist kritischer, daher Fokus darauf)
   const shortfallEl = document.getElementById("mc-shortfall-rate");
   if (shortfallEl) {
@@ -3436,6 +3611,30 @@ function renderMonteCarloStats(results) {
     const vulnEl = document.getElementById("mc-sorr-vulnerability");
     if (vulnEl) {
       vulnEl.textContent = `Jahr 1-${sorr.vulnerabilityWindow}`;
+    }
+    
+    // Dynamische SoRR-Erklärung mit einfachen Texten
+    const sorrExplEl = document.getElementById("mc-sorr-explanation-text");
+    if (sorrExplEl) {
+      const crashImpact = Math.abs(sorr.earlyBadImpact).toFixed(0);
+      const boomImpact = sorr.earlyGoodImpact.toFixed(0);
+      const corrPct = (sorr.correlationEarlyReturns * 100).toFixed(0);
+      const vulnYears = sorr.vulnerabilityWindow;
+      
+      let riskLevel = "moderat";
+      if (sorr.sorRiskScore > 150) riskLevel = "hoch";
+      else if (sorr.sorRiskScore > 75) riskLevel = "erhöht";
+      else if (sorr.sorRiskScore <= 50) riskLevel = "gering";
+      
+      sorrExplEl.innerHTML = `
+        <strong>Interpretation:</strong> Das Sequence-of-Returns-Risiko ist <strong>${riskLevel}</strong>. 
+        Ein früher Crash in den ersten ${vulnYears} Jahren reduziert dein Endvermögen im Schnitt um <strong>${crashImpact}%</strong> 
+        gegenüber einem durchschnittlichen Verlauf. Umgekehrt führt ein früher Boom zu <strong>+${boomImpact}%</strong> mehr Endvermögen. 
+        Die Korrelation zwischen frühen Renditen und Endergebnis beträgt ${corrPct}% – 
+        ${corrPct > 60 ? "die ersten Jahre sind entscheidend für deinen Erfolg." : 
+          corrPct > 30 ? "die ersten Jahre haben spürbaren Einfluss." : 
+          "die ersten Jahre haben nur begrenzten Einfluss."}
+      `;
     }
   }
   
@@ -3750,6 +3949,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
+      rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
       capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
       capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
       capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),

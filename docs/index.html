@@ -246,8 +246,12 @@
               </div>
             </div>
             <label class="field">
-              <span class="field-label" data-tooltip="Fester monatlicher Entnahmebetrag nach Steuern. Wird bei aktivierter Inflation jährlich angepasst.">Wunschrente Netto (EUR)</span>
+              <span class="field-label" data-tooltip="Fester monatlicher Entnahmebetrag. Wird bei aktivierter Inflation jährlich angepasst.">Wunschrente (EUR)</span>
               <input type="number" step="50" id="rent_eur" value="1000" min="0" max="1000000">
+            </label>
+            <label class="field field--checkbox">
+              <input type="checkbox" id="rent_is_gross">
+              <span class="field-label" data-tooltip="Wenn aktiviert: Der Betrag ist BRUTTO (Verkaufserlös vor Steuern). Es werden ETF-Anteile im Wert dieses Betrags verkauft, dann werden Steuern abgezogen – du erhältst den Netto-Betrag. Beispiel: 1000€ brutto → ~850€ netto bei 15% Steuerlast. Wenn deaktiviert (Standard): Der Betrag ist NETTO (nach Steuern) – du erhältst genau diesen Betrag, es werden entsprechend mehr ETF-Anteile verkauft um die Steuern zu decken.">Brutto-Entnahme (vor Steuern)</span>
             </label>
             <label class="field">
               <span class="field-label" data-tooltip="Entnahme als Prozent des Startvermögens bei Entnahmebeginn (4%-Regel). Der Betrag wird dann jährlich um die Inflation erhöht. 4% gilt als sichere Entnahmerate über 30 Jahre.">Wunschrente % vom Startvermögen p.a.</span>
@@ -556,12 +560,24 @@
             <span id="mc-progress-text"></span>
           </div>
 
+          <!-- Warnungen für optimistische Parameter -->
+          <div class="mc-warnings" id="mc-warnings" style="display: none;">
+            <div class="mc-warning" id="mc-warning-optimistic">
+              <span class="mc-warning-icon">⚠️</span>
+              <span class="mc-warning-text" id="mc-warning-text">Die gewählten Parameter sind historisch sehr optimistisch.</span>
+            </div>
+          </div>
+
           <!-- Highlight: Erfolgswahrscheinlichkeit -->
           <div class="mc-highlight">
             <div class="mc-highlight-main">
-              <span class="mc-highlight-label">Erfolgswahrscheinlichkeit</span>
+              <span class="mc-highlight-label" data-tooltip="Erfolg = Keine deutlichen Engpässe (≥1% oder 50€ unter Ziel) während der Entnahmephase UND Endvermögen über der eingestellten Schwelle in heutiger Kaufkraft.">Erfolgswahrscheinlichkeit</span>
               <span class="mc-highlight-value" id="mc-success-rate">-</span>
-              <span class="mc-highlight-hint">Keine Entnahme-Shortfalls &amp; Endvermögen &gt; 100€ real</span>
+              <span class="mc-highlight-hint" id="mc-success-hint">Keine Entnahme-Shortfalls &amp; Endvermögen &gt; 100€ real</span>
+            </div>
+            <div class="mc-highlight-secondary">
+              <span class="mc-highlight-label-small">Soft-Erfolg (nur Endvermögen)</span>
+              <span class="mc-highlight-value-small" id="mc-success-rate-soft">-</span>
             </div>
             <div class="mc-highlight-meta">
               <span id="mc-iterations-done">-</span> Simulationen durchgeführt
@@ -760,45 +776,49 @@
 
           <!-- Sequence-of-Returns Risk -->
           <div class="mc-stats-section">
-            <h4 class="mc-stats-title">
-              <svg class="mc-stats-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <h4 class="mc-stats-title mc-stats-title--sorr">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sorr-icon">
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
               </svg>
               Sequence-of-Returns-Risk (SoRR)
             </h4>
             <p class="mc-stats-desc">Zeigt, wie stark die <strong>Reihenfolge der Renditen</strong> in den ersten Jahren der Entnahmephase das Endergebnis beeinflusst.</p>
+            <!-- Dynamische SoRR-Erklärung -->
+            <div class="mc-sorr-explanation" id="mc-sorr-explanation">
+              <p id="mc-sorr-explanation-text">Die SoRR-Analyse wird nach der Simulation angezeigt.</p>
+            </div>
             <div class="stats-grid stats-grid--mc">
-              <div class="stat-card stat-card--mc stat-card--sorr-main">
+              <div class="stat-card stat-card--mc stat-card--sorr-main" data-tooltip="Differenz zwischen dem durchschnittlichen Endvermögen bei guten vs. schlechten frühen Renditen, in % des Vermögens bei Rentenbeginn.">
                 <span class="stat-label">SoRR-Spreizung</span>
                 <span class="stat-value" id="mc-sorr-score">-</span>
                 <small class="stat-hint">Unterschied beste vs. schlechteste Sequenz</small>
               </div>
-              <div class="stat-card stat-card--mc stat-card--worst">
+              <div class="stat-card stat-card--mc stat-card--worst" data-tooltip="So viel weniger Endvermögen hast du im Schnitt, wenn die ersten 5 Jahre der Entnahmephase schlecht laufen (unterstes Quintil der Renditen).">
                 <span class="stat-label">Früher Crash-Effekt</span>
                 <span class="stat-value" id="mc-sorr-early-bad">-</span>
-                <small class="stat-hint">Impact bei schlechten frühen Renditen</small>
+                <small class="stat-hint">Endvermögen-Reduktion bei frühem Crash</small>
               </div>
-              <div class="stat-card stat-card--mc stat-card--best">
+              <div class="stat-card stat-card--mc stat-card--best" data-tooltip="So viel mehr Endvermögen hast du im Schnitt, wenn die ersten 5 Jahre der Entnahmephase gut laufen (oberstes Quintil der Renditen).">
                 <span class="stat-label">Früher Boom-Effekt</span>
                 <span class="stat-value" id="mc-sorr-early-good">-</span>
-                <small class="stat-hint">Impact bei guten frühen Renditen</small>
+                <small class="stat-hint">Endvermögen-Bonus bei frühem Boom</small>
               </div>
-              <div class="stat-card stat-card--mc">
+              <div class="stat-card stat-card--mc" data-tooltip="Statistische Korrelation zwischen frühen Renditen und Endvermögen. 100% = perfekte Korrelation, 0% = kein Zusammenhang.">
                 <span class="stat-label">Korrelation frühe Rendite ↔ Ende</span>
                 <span class="stat-value" id="mc-sorr-correlation">-</span>
                 <small class="stat-hint">Wie stark bestimmen frühe Jahre das Ende</small>
               </div>
-              <div class="stat-card stat-card--mc stat-card--worst">
+              <div class="stat-card stat-card--mc stat-card--worst" data-tooltip="Durchschnittliches Endvermögen der Simulationen mit den schlechtesten frühen Renditen (unterstes Quintil).">
                 <span class="stat-label">Endvermögen (schlechte Sequenz)</span>
                 <span class="stat-value" id="mc-sorr-worst-seq">-</span>
                 <small class="stat-hint">Ø bei schlechten frühen Renditen</small>
               </div>
-              <div class="stat-card stat-card--mc stat-card--best">
+              <div class="stat-card stat-card--mc stat-card--best" data-tooltip="Durchschnittliches Endvermögen der Simulationen mit den besten frühen Renditen (oberstes Quintil).">
                 <span class="stat-label">Endvermögen (gute Sequenz)</span>
                 <span class="stat-value" id="mc-sorr-best-seq">-</span>
                 <small class="stat-hint">Ø bei guten frühen Renditen</small>
               </div>
-              <div class="stat-card stat-card--mc">
+              <div class="stat-card stat-card--mc" data-tooltip="Die Jahre nach Rentenbeginn, in denen die Renditen den stärksten Einfluss auf das Endergebnis haben.">
                 <span class="stat-label">Kritisches Fenster</span>
                 <span class="stat-value" id="mc-sorr-vulnerability">-</span>
                 <small class="stat-hint">Höchste Sensitivität in diesen Jahren</small>

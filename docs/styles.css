@@ -1495,3 +1495,83 @@ canvas#mc-graph {
 .export-menu-item:disabled:hover {
   background: transparent;
 }
+
+/* ============ Neue UI-Elemente für Verbesserungen ============ */
+
+/* Warnungen für optimistische Parameter */
+.mc-warnings {
+  margin-bottom: 16px;
+}
+
+.mc-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  color: #fbbf24;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.mc-warning-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.mc-warning-text {
+  flex: 1;
+}
+
+/* Zweite Erfolgsdefinition (Soft-Erfolg) */
+.mc-highlight-secondary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.mc-highlight-label-small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mc-highlight-value-small {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent-2);
+}
+
+/* SoRR-Erklärung */
+.mc-sorr-explanation {
+  background: rgba(99, 102, 241, 0.08);
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  margin: 12px 0 16px;
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.mc-sorr-explanation p {
+  margin: 0;
+}
+
+.mc-sorr-explanation strong {
+  color: var(--accent);
+}
+
+/* Shortfall-Erklärungstext direkt sichtbar */
+.shortfall-explanation {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
