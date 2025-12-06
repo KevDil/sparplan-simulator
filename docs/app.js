@@ -3798,16 +3798,25 @@ function renderMonteCarloStats(results) {
     // Reset CSS-Klasse
     depletionInfoEl.classList.remove("mc-depletion-info--warning");
     
-    if (depletion.p5DepletionYear || depletion.p10DepletionYear) {
-      let text = "";
-      if (depletion.p5DepletionYear) {
-        text = `In den <strong>schlechtesten 5%</strong> der Szenarien ist das Vermögen nach <strong>~${depletion.p5DepletionYear} Jahren</strong> in der Entnahmephase aufgebraucht.`;
-      } else if (depletion.p10DepletionYear) {
-        text = `In den <strong>schlechtesten 10%</strong> der Szenarien ist das Vermögen nach <strong>~${depletion.p10DepletionYear} Jahren</strong> in der Entnahmephase aufgebraucht.`;
+    const { p5DepletionYear, p10DepletionYear } = depletion;
+
+    if (p5DepletionYear || p10DepletionYear) {
+      const parts = [];
+
+      if (p10DepletionYear) {
+        parts.push(`In den <strong>schlechtesten 10%</strong> der Szenarien ist das Vermögen nach <strong>~${p10DepletionYear} Jahren</strong> in der Entnahmephase aufgebraucht.`);
+      }
+
+      if (p5DepletionYear) {
+        parts.push(`In den <strong>extremsten 5%</strong> der Szenarien ist das Vermögen bereits nach <strong>~${p5DepletionYear} Jahren</strong> aufgebraucht.`);
+      }
+
+      // Nur 10%-Info (kein 5%-Wert): eher "Warnung" statt Extremfall → gelbe Variante
+      if (p10DepletionYear && !p5DepletionYear) {
         depletionInfoEl.classList.add("mc-depletion-info--warning");
       }
-      
-      depletionTextEl.innerHTML = text;
+
+      depletionTextEl.innerHTML = parts.join("<br>");
       depletionInfoEl.style.display = "flex";
     } else {
       depletionInfoEl.style.display = "none";
