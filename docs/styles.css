@@ -1525,6 +1525,51 @@ canvas#mc-graph {
   flex: 1;
 }
 
+/* Schweregrade für Warnungen */
+.mc-warning--critical {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+
+.mc-warning--critical .mc-warning-icon {
+  color: #ef4444;
+}
+
+/* Verbrauchsjahre-Info */
+.mc-depletion-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  color: #f87171;
+  font-size: 14px;
+  line-height: 1.5;
+  margin-top: 12px;
+}
+
+.mc-depletion-info--warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
+.mc-depletion-icon {
+  flex-shrink: 0;
+  font-size: 20px;
+}
+
+.mc-depletion-text {
+  flex: 1;
+}
+
+.mc-depletion-text strong {
+  color: inherit;
+}
+
 /* Zweite Erfolgsdefinition (Soft-Erfolg) */
 .mc-highlight-secondary {
   display: flex;

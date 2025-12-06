@@ -179,6 +179,15 @@
               <small class="field-hint">2024: 2,29% | 2025: 2,53%</small>
             </label>
             <label class="field">
+              <span class="field-label" data-tooltip="Fondstyp bestimmt die Teilfreistellung: Aktienfonds (30% steuerfrei), Mischfonds (15% steuerfrei), Rentenfonds/Andere (0% steuerfrei). § 20 InvStG.">Fondstyp (Teilfreistellung)</span>
+              <select id="fondstyp">
+                <option value="aktien">Aktienfonds (30% steuerfrei)</option>
+                <option value="misch">Mischfonds (15% steuerfrei)</option>
+                <option value="renten">Rentenfonds/Andere (0% steuerfrei)</option>
+              </select>
+              <small class="field-hint">Beeinflusst Besteuerung von Gewinnen &amp; Vorabpauschale</small>
+            </label>
+            <label class="field">
               <span class="field-label" data-tooltip="Bestehender allgemeiner Verlusttopf aus Vorjahren. Wird mit ETF-Gewinnen/-Verlusten, Zinsen und Vorabpauschale verrechnet. Nach deutschem Steuerrecht gehören ETFs in den allgemeinen Topf (Aktien-Topf nur für Einzelaktien).">Verlusttopf (EUR)</span>
               <input type="number" step="100" id="loss_pot" value="0" min="0" max="10000000">
               <small class="field-hint">Für ETFs, Zinsen &amp; Vorabpauschale</small>
@@ -566,6 +575,12 @@
               <span class="mc-warning-icon">⚠️</span>
               <span class="mc-warning-text" id="mc-warning-text">Die gewählten Parameter sind historisch sehr optimistisch.</span>
             </div>
+          </div>
+          
+          <!-- Verbrauchsjahre-Info (wann ist Vermögen aufgebraucht) -->
+          <div class="mc-depletion-info" id="mc-depletion-info" style="display: none;">
+            <span class="mc-depletion-icon">⏳</span>
+            <span class="mc-depletion-text" id="mc-depletion-text"></span>
           </div>
 
           <!-- Highlight: Erfolgswahrscheinlichkeit -->

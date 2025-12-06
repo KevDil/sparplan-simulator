@@ -9,9 +9,11 @@
  * - Reihenfolge Freibetrag-Nutzung: TG-Zinsen (Dezember) → Vorabpauschale (Januar Folgejahr)
  * 
  * MODELLVEREINFACHUNGEN:
- * - Nur thesaurierende Aktienfonds modelliert (keine Ausschüttungen)
- * - Teilfreistellung fix 70% steuerpflichtig (30% frei, § 20 InvStG) – nur für Aktienfonds korrekt
- *   (Mischfonds: 15% frei, Rentenfonds: 0% frei – hier nicht implementiert)
+ * - Nur thesaurierende Fonds modelliert (keine Ausschüttungen)
+ * - Teilfreistellung je nach Fondstyp (§ 20 InvStG):
+ *   → Aktienfonds: 30% steuerfrei (70% steuerpflichtig)
+ *   → Mischfonds: 15% steuerfrei (85% steuerpflichtig)
+ *   → Rentenfonds/Andere: 0% steuerfrei (100% steuerpflichtig)
  * - Quellensteuer auf ausländische Erträge nicht berücksichtigt
  * - Vorabpauschale-Liquidität: Bei Unterdeckung des Tagesgeldes wird die Steuer auf verfügbares
  *   Guthaben automatischer ETF-Verkauf, bei Totalausfall Shortfall-Flag (keine Dispo-Aufnahme).
@@ -35,7 +37,12 @@
 
 const TAX_RATE_BASE = 0.25; // Kapitalertragsteuer
 const SOLI_RATE = 0.055; // Solidaritätszuschlag auf KESt
-const TEILFREISTELLUNG = 0.7; // 30% steuerfrei bei Aktienfonds
+// Teilfreistellung nach § 20 InvStG - steuerpflichtiger Anteil
+const TEILFREISTELLUNG_MAP = {
+  aktien: 0.7,  // 30% steuerfrei bei Aktienfonds (≥51% Aktien)
+  misch: 0.85,  // 15% steuerfrei bei Mischfonds (≥25% Aktien)
+  renten: 1.0,  // 0% steuerfrei bei Rentenfonds/Andere
+};
 const SPARERPAUSCHBETRAG_SINGLE = 1000;
 const SPARERPAUSCHBETRAG_VERHEIRATET = 2000;
 const KIRCHENSTEUER_SATZ_8 = 0.08; // Bayern, Baden-Württemberg
@@ -179,6 +186,7 @@ function applyStoredValues() {
   // Select-Elemente (Dropdowns)
   const selectFields = [
     { key: "kirchensteuer", id: "kirchensteuer" },
+    { key: "fondstyp", id: "fondstyp" },
   ];
   for (const { key, id } of selectFields) {
     const el = document.getElementById(id);
@@ -243,6 +251,7 @@ function getDefaultValues() {
     inflation_rate: 2.0,
     sparerpauschbetrag: SPARERPAUSCHBETRAG_SINGLE,
     kirchensteuer: "keine",
+    fondstyp: "aktien",
     basiszins: 2.53,
     use_lifo: false,
     capital_preservation_enabled: false,
@@ -994,9 +1003,10 @@ function consolidateLots(etfLots, priceTolerance = 0.01) {
  * @param {number} taxRate - Effektiver Steuersatz
  * @param {number} lossPot - Allgemeiner Verlusttopf (Startwert)
  * @param {boolean} useFifo - true = FIFO, false = LIFO
+ * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
  * @returns {Object} { remaining, taxPaid, yearlyUsedFreibetrag, lossPot, grossProceeds, taxableGainTotal }
  */
-function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true) {
+function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
   let lossPot = lossPotStart;
@@ -1013,7 +1023,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
 
     if (gainPerShare > 0) {
       // Gewinn: Berechne wie viele Shares wir verkaufen müssen
-      const taxableGainPerShare = gainPerShare * TEILFREISTELLUNG;
+      const taxableGainPerShare = gainPerShare * teilfreistellung;
       
       // Verlusttopf deckt wie viele Shares ab? (zuerst, banknah)
       const lossPotCoversShares = Math.min(
@@ -1052,7 +1062,7 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
     // Brutto-Gewinn/Verlust des Lots
     const bruttoGainLoss = sharesToSell * gainPerShare;
     // Steuerpflichtiger Betrag nach Teilfreistellung
-    const taxableGainLoss = bruttoGainLoss * TEILFREISTELLUNG;
+    const taxableGainLoss = bruttoGainLoss * teilfreistellung;
     taxableGainTotal += taxableGainLoss;
     
     let partTax = 0;
@@ -1115,9 +1125,10 @@ function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibet
  * @param {number} taxRate - Effektiver Steuersatz
  * @param {number} lossPot - Allgemeiner Verlusttopf
  * @param {boolean} useFifo - true = FIFO, false = LIFO
+ * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
  * @returns {Object} { netProceeds, taxPaid, yearlyUsedFreibetrag, lossPot, shortfall }
  */
-function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true) {
+function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
   let taxPaid = 0;
   let freibetragUsed = yearlyUsedFreibetrag;
   let lossPot = lossPotStart;
@@ -1136,7 +1147,7 @@ function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetra
     
     // Gewinn/Verlust berechnen
     const bruttoGainLoss = sharesToSell * gainPerShare;
-    const taxableGainLoss = bruttoGainLoss * TEILFREISTELLUNG;
+    const taxableGainLoss = bruttoGainLoss * teilfreistellung;
     
     let partTax = 0;
     
@@ -1198,8 +1209,9 @@ function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetra
  * @param {number} taxRate - Steuersatz
  * @param {number} lossPot - Allgemeiner Verlusttopf
  * @param {boolean} useFifo - FIFO oder LIFO
+ * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
  */
-function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true) {
+function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
   if (taxAmount <= 0) {
     return {
       savings,
@@ -1221,7 +1233,7 @@ function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice,
 
   let saleTax = 0;
   if (remainingTax > 0.01 && etfLots.length) {
-    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, useFifo);
+    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, useFifo, teilfreistellung);
     remainingTax = sellResult.remaining;
     saleTax = sellResult.taxPaid;
     yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1286,11 +1298,15 @@ function simulate(params, volatility = 0) {
     capital_preservation_reduction = 25,
     capital_preservation_recovery = 10,
     loss_pot: initialLossPot = 0,
+    fondstyp = "aktien",
   } = params;
   
   // Stochastic mode: volatility > 0 aktiviert Monte-Carlo-Modus
   const isStochastic = volatility > 0;
   const monthlyVolatility = isStochastic ? toMonthlyVolatility(volatility / 100) : 0;
+
+  // Teilfreistellung basierend auf Fondstyp (§ 20 InvStG)
+  const teilfreistellung = TEILFREISTELLUNG_MAP[fondstyp] || TEILFREISTELLUNG_MAP.aktien;
 
   // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
   let kirchensteuerSatz = 0;
@@ -1400,7 +1416,8 @@ function simulate(params, volatility = 0) {
           sparerpauschbetrag,
           taxRate,
           lossPot,
-          !use_lifo
+          !use_lifo,
+          teilfreistellung
         );
         savings = coverResult.savings;
         yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
@@ -1509,7 +1526,7 @@ function simulate(params, volatility = 0) {
         }
 
         // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
+        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
         remaining = sellResult.remaining;
         tax_paid += sellResult.taxPaid;
         yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1624,7 +1641,7 @@ function simulate(params, volatility = 0) {
           // Nutzer erhält: Brutto - Steuer = Netto
           // WICHTIG: Für Shortfall-Analyse zählt nur echter Shortfall (nicht genug Assets),
           // NICHT die Steuerdifferenz zwischen Brutto und Netto!
-          const sellResult = sellEtfGross(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
+          const sellResult = sellEtfGross(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
           const netReceived = sellResult.netProceeds;
           tax_paid += sellResult.taxPaid;
           yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1638,7 +1655,7 @@ function simulate(params, volatility = 0) {
           netWithdrawalThisMonth += netReceived;
         } else if (remaining > 0) {
           // NETTO-MODUS (Standard): Verkaufe genug ETF um Netto-Betrag zu erhalten
-          const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo);
+          const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
           remaining = sellResult.remaining;
           tax_paid += sellResult.taxPaid;
           yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
@@ -1709,7 +1726,8 @@ function simulate(params, volatility = 0) {
             sparerpauschbetrag,
             taxRate,
             lossPot,
-            !use_lifo
+            !use_lifo,
+            teilfreistellung
           );
           savings = coverResult.savings;
           yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
@@ -1766,9 +1784,9 @@ function simulate(params, volatility = 0) {
         }
         
         if (totalVorabpauschale > 0) {
-          // Teilfreistellung nach § 20 InvStG: Bei Aktienfonds sind 30% steuerfrei,
-          // d.h. nur 70% der Vorabpauschale sind steuerpflichtig.
-          const taxableVorabpauschale = totalVorabpauschale * TEILFREISTELLUNG;
+          // Teilfreistellung nach § 20 InvStG: Steuerpflichtiger Anteil je nach Fondstyp
+          // Aktienfonds: 70%, Mischfonds: 85%, Rentenfonds: 100%
+          const taxableVorabpauschale = totalVorabpauschale * teilfreistellung;
           
           // WICHTIG: Steuer wird NICHT jetzt eingezogen!
           // Stattdessen für Januar des Folgejahres vormerken
@@ -1880,7 +1898,8 @@ function simulate(params, volatility = 0) {
       sparerpauschbetrag,
       taxRate,
       lossPot,
-      !use_lifo
+      !use_lifo,
+      teilfreistellung
     );
     savings = coverResult.savings;
     lossPot = coverResult.lossPot;
@@ -2553,6 +2572,7 @@ form.addEventListener("submit", (e) => {
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+      fondstyp: document.getElementById("fondstyp")?.value || "aktien",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
@@ -2865,6 +2885,7 @@ function createSeededRandom(seed) {
 }
 
 // Prüft Parameter auf historisch unrealistische Kombinationen
+// Gibt Array von {text, severity} zurück ('warning' = gelb, 'critical' = rot)
 function checkOptimisticParameters(params, volatility) {
   const warnings = [];
   const etfRate = params.etf_rate_pa || 6;
@@ -2874,31 +2895,61 @@ function checkOptimisticParameters(params, volatility) {
   const inflation = params.inflation_rate_pa || 2;
   
   // Rendite > 8% ist historisch optimistisch (MSCI World Durchschnitt ~7%)
-  if (effectiveRate > 8) {
-    warnings.push(`ETF-Rendite von ${effectiveRate.toFixed(1)}% ist optimistisch – historischer Durchschnitt liegt bei ~6-7% nach Kosten.`);
+  if (effectiveRate > 10) {
+    warnings.push({ text: `ETF-Rendite von ${effectiveRate.toFixed(1)}% ist unrealistisch hoch – historischer Durchschnitt liegt bei ~6-7% nach Kosten.`, severity: "critical" });
+  } else if (effectiveRate > 8) {
+    warnings.push({ text: `ETF-Rendite von ${effectiveRate.toFixed(1)}% ist optimistisch – historischer Durchschnitt liegt bei ~6-7% nach Kosten.`, severity: "warning" });
   }
   
   // Niedrige Volatilität bei hoher Rendite
-  if (effectiveRate > 6 && volatility < 12) {
-    warnings.push(`Volatilität von ${volatility}% bei ${effectiveRate.toFixed(1)}% Rendite ist unrealistisch niedrig – Aktien-ETFs schwanken typisch 15-20%.`);
+  if (effectiveRate > 6 && volatility < 10) {
+    warnings.push({ text: `Volatilität von ${volatility}% bei ${effectiveRate.toFixed(1)}% Rendite ist unrealistisch niedrig – Aktien-ETFs schwanken typisch 15-20%.`, severity: "critical" });
+  } else if (effectiveRate > 6 && volatility < 12) {
+    warnings.push({ text: `Volatilität von ${volatility}% bei ${effectiveRate.toFixed(1)}% Rendite ist niedrig – Aktien-ETFs schwanken typisch 15-20%.`, severity: "warning" });
   }
   
   // Hohe Entnahmerate
-  if (withdrawalRate > 4.5) {
-    warnings.push(`Entnahmerate von ${withdrawalRate}% p.a. ist aggressiv – die "sichere" 4%-Regel basiert auf 30 Jahren; längere Zeiträume erfordern niedrigere Raten.`);
+  if (withdrawalRate > 5) {
+    warnings.push({ text: `Entnahmerate von ${withdrawalRate}% p.a. ist sehr riskant – hohes Pleite-Risiko über 30 Jahre!`, severity: "critical" });
+  } else if (withdrawalRate > 4.5) {
+    warnings.push({ text: `Entnahmerate von ${withdrawalRate}% p.a. ist aggressiv – die "sichere" 4%-Regel basiert auf 30 Jahren.`, severity: "warning" });
   }
   
   // Sehr hohe Rendite + hohe Entnahme = überkonfident
   if (effectiveRate > 7 && withdrawalRate > 4) {
-    warnings.push(`Kombination aus ${effectiveRate.toFixed(1)}% Rendite und ${withdrawalRate}% Entnahme ist sehr optimistisch – plane konservativer.`);
+    warnings.push({ text: `Kombination aus ${effectiveRate.toFixed(1)}% Rendite und ${withdrawalRate}% Entnahme ist sehr optimistisch – plane konservativer.`, severity: "warning" });
   }
   
   // Niedrige Inflation
   if (inflation < 1.5) {
-    warnings.push(`Inflationsannahme von ${inflation}% liegt unter dem EZB-Ziel von 2% – reale Ergebnisse könnten schlechter sein.`);
+    warnings.push({ text: `Inflationsannahme von ${inflation}% liegt unter dem EZB-Ziel von 2% – reale Ergebnisse könnten schlechter sein.`, severity: "warning" });
   }
   
   return warnings;
+}
+
+// Berechnet, in welchem Jahr das Vermögen für P5/P10 auf 0 fällt
+function calculateDepletionYears(results, params) {
+  const savingsMonths = params.savings_years * MONTHS_PER_YEAR;
+  const percentiles = results.percentilesReal || results.percentiles;
+  
+  let p5DepletionYear = null;
+  let p10DepletionYear = null;
+  
+  // Suche nach dem ersten Monat in der Entnahmephase, wo P5/P10 auf 0 oder nahe 0 fällt
+  const threshold = 100; // 100€ als "praktisch aufgebraucht"
+  
+  for (let i = savingsMonths; i < percentiles.p5.length; i++) {
+    if (p5DepletionYear === null && percentiles.p5[i] <= threshold) {
+      p5DepletionYear = Math.ceil((i - savingsMonths + 1) / MONTHS_PER_YEAR);
+    }
+    if (p10DepletionYear === null && percentiles.p10[i] <= threshold) {
+      p10DepletionYear = Math.ceil((i - savingsMonths + 1) / MONTHS_PER_YEAR);
+    }
+    if (p5DepletionYear !== null && p10DepletionYear !== null) break;
+  }
+  
+  return { p5DepletionYear, p10DepletionYear };
 }
 
 // Hauptfunktion für Monte-Carlo-Simulation
@@ -2912,10 +2963,20 @@ async function runMonteCarloSimulation(params, iterations, volatility, showIndiv
   // Prüfe auf optimistische Parameter und zeige Warnungen
   const paramWarnings = checkOptimisticParameters(params, volatility);
   const warningsEl = document.getElementById("mc-warnings");
+  const warningContainerEl = document.getElementById("mc-warning-optimistic");
   const warningTextEl = document.getElementById("mc-warning-text");
-  if (warningsEl && warningTextEl) {
+  if (warningsEl && warningTextEl && warningContainerEl) {
     if (paramWarnings.length > 0) {
-      warningTextEl.innerHTML = paramWarnings.join("<br>");
+      // Höchster Schweregrad bestimmt die Farbe
+      const hasCritical = paramWarnings.some(w => w.severity === "critical");
+      warningContainerEl.classList.toggle("mc-warning--critical", hasCritical);
+      
+      // Icon anpassen
+      const iconEl = warningContainerEl.querySelector(".mc-warning-icon");
+      if (iconEl) iconEl.textContent = hasCritical ? "🚨" : "⚠️";
+      
+      // Texte zusammenbauen
+      warningTextEl.innerHTML = paramWarnings.map(w => w.text).join("<br>");
       warningsEl.style.display = "block";
     } else {
       warningsEl.style.display = "none";
@@ -3727,6 +3788,31 @@ function renderMonteCarloStats(results) {
   if (mcBadgeEl) {
     mcBadgeEl.style.display = "inline";
   }
+  
+  // Verbrauchsjahre-Info anzeigen (wann ist Vermögen aufgebraucht)
+  const depletionInfoEl = document.getElementById("mc-depletion-info");
+  const depletionTextEl = document.getElementById("mc-depletion-text");
+  if (depletionInfoEl && depletionTextEl && lastParams) {
+    const depletion = calculateDepletionYears(results, lastParams);
+    
+    // Reset CSS-Klasse
+    depletionInfoEl.classList.remove("mc-depletion-info--warning");
+    
+    if (depletion.p5DepletionYear || depletion.p10DepletionYear) {
+      let text = "";
+      if (depletion.p5DepletionYear) {
+        text = `In den <strong>schlechtesten 5%</strong> der Szenarien ist das Vermögen nach <strong>~${depletion.p5DepletionYear} Jahren</strong> in der Entnahmephase aufgebraucht.`;
+      } else if (depletion.p10DepletionYear) {
+        text = `In den <strong>schlechtesten 10%</strong> der Szenarien ist das Vermögen nach <strong>~${depletion.p10DepletionYear} Jahren</strong> in der Entnahmephase aufgebraucht.`;
+        depletionInfoEl.classList.add("mc-depletion-info--warning");
+      }
+      
+      depletionTextEl.innerHTML = text;
+      depletionInfoEl.style.display = "flex";
+    } else {
+      depletionInfoEl.style.display = "none";
+    }
+  }
 }
 
 function renderMonteCarloGraph(results) {
@@ -4031,6 +4117,7 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
       sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
       kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+      fondstyp: document.getElementById("fondstyp")?.value || "aktien",
       basiszins: readNumber("basiszins", { min: 0, max: 10 }),
       use_lifo: document.getElementById("use_lifo")?.checked ?? false,
       rent_mode: mode,
