@@ -3268,10 +3268,12 @@ function renderMonteCarloStats(results) {
     ].join("\n");
     shortfallEl.title = shortfallDetails;
     shortfallEl.setAttribute("aria-label", shortfallDetails);
+    shortfallEl.setAttribute("data-tooltip", shortfallDetails);
     const shortfallHintEl = shortfallEl.closest(".stat-card")?.querySelector(".stat-hint");
     if (shortfallHintEl) {
       shortfallHintEl.title = shortfallDetails;
       shortfallHintEl.setAttribute("aria-label", shortfallDetails);
+      shortfallHintEl.setAttribute("data-tooltip", shortfallDetails);
     }
     shortfallEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
     if (entnahmeRate <= 5) {
