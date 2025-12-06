@@ -3260,8 +3260,16 @@ function renderMonteCarloStats(results) {
     const entnahmeRate = results.entnahmeShortfallRate || 0;
     const ansparRate = results.ansparShortfallRate || 0;
     shortfallEl.textContent = `${entnahmeRate.toFixed(1)}%`;
-    // Tooltip mit Details
-    shortfallEl.title = `Entnahme: ${entnahmeRate.toFixed(1)}% | Anspar: ${ansparRate.toFixed(1)}%`;
+    // Tooltip mit Details - auf stat-card setzen für bessere Hover-Erkennung
+    const tooltipText = `Entnahme-Shortfalls: ${entnahmeRate.toFixed(1)}%\nAnspar-Shortfalls: ${ansparRate.toFixed(1)}%`;
+    shortfallEl.title = tooltipText;
+    // Auch auf Parent (stat-card) und Hint setzen
+    const parentCard = shortfallEl.closest('.stat-card');
+    if (parentCard) {
+      parentCard.title = tooltipText;
+      const hint = parentCard.querySelector('.stat-hint');
+      if (hint) hint.title = tooltipText;
+    }
     shortfallEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
     if (entnahmeRate <= 5) {
       shortfallEl.classList.add("stat-value--success");
