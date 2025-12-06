@@ -3260,15 +3260,18 @@ function renderMonteCarloStats(results) {
     const entnahmeRate = results.entnahmeShortfallRate || 0;
     const ansparRate = results.ansparShortfallRate || 0;
     shortfallEl.textContent = `${entnahmeRate.toFixed(1)}%`;
-    // Tooltip mit Details - auf stat-card setzen für bessere Hover-Erkennung
-    const tooltipText = `Entnahme-Shortfalls: ${entnahmeRate.toFixed(1)}%\nAnspar-Shortfalls: ${ansparRate.toFixed(1)}%`;
-    shortfallEl.title = tooltipText;
-    // Auch auf Parent (stat-card) und Hint setzen
-    const parentCard = shortfallEl.closest('.stat-card');
-    if (parentCard) {
-      parentCard.title = tooltipText;
-      const hint = parentCard.querySelector('.stat-hint');
-      if (hint) hint.title = tooltipText;
+    // Tooltip mit Details (gleiche Info auch auf der Hint-Zeile anzeigen)
+    const shortfallDetails = [
+      `Entnahme: ${entnahmeRate.toFixed(1)}%`,
+      `Anspar: ${ansparRate.toFixed(1)}%`,
+      "Shortfall = Auszahlung mind. 1% oder 50€ unter Ziel (Anspar: >50€ Unterdeckung)"
+    ].join("\n");
+    shortfallEl.title = shortfallDetails;
+    shortfallEl.setAttribute("aria-label", shortfallDetails);
+    const shortfallHintEl = shortfallEl.closest(".stat-card")?.querySelector(".stat-hint");
+    if (shortfallHintEl) {
+      shortfallHintEl.title = shortfallDetails;
+      shortfallHintEl.setAttribute("aria-label", shortfallDetails);
     }
     shortfallEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
     if (entnahmeRate <= 5) {
