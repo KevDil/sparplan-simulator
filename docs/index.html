@@ -437,12 +437,7 @@
         <div class="actions">
           <button type="submit" class="btn btn--primary">Simulation starten</button>
           <button type="button" id="btn-monte-carlo" class="btn btn--accent">Monte-Carlo starten</button>
-          <button type="button" id="btn-optimize" class="btn btn--optimize" disabled title="Erst Monte-Carlo starten, dann optimieren">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-            Parameter optimieren
-          </button>
+
           <div class="btn-group">
             <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
             <div class="export-dropdown">
@@ -934,6 +929,12 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div class="mc-optimize-start">
+          <button type="button" id="btn-optimize" class="btn btn--optimize" disabled title="Erst Monte-Carlo starten, dann optimieren">
+            Parameter optimieren
+          </button>
         </div>
 
         <!-- Optimierungs-Ergebnisse -->

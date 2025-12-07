@@ -1856,6 +1856,96 @@ let lastMcResults = null;
 let mcUseLogScale = true; // Standard: logarithmische Skala
 let mcUseRealValues = false; // Standard: nominale Werte im Graph
 
+function createEtaTracker(options) {
+  const minSamples = options && typeof options.minSamples === "number" ? options.minSamples : 3;
+  const minElapsedMs = options && typeof options.minElapsedMs === "number" ? options.minElapsedMs : 1500;
+  const alpha = options && typeof options.alpha === "number" ? options.alpha : 0.3;
+  let totalWork = 0;
+  let startTime = 0;
+  let lastUpdateTime = 0;
+  let lastCompleted = 0;
+  let smoothedThroughput = 0;
+  let sampleCount = 0;
+  let stopped = false;
+
+  function now() {
+    return Date.now();
+  }
+
+  function formatEta(etaSeconds) {
+    if (!isFinite(etaSeconds) || etaSeconds < 0) return "";
+    if (etaSeconds < 1) return "< 1 s";
+    if (etaSeconds < 60) {
+      return String(Math.round(etaSeconds)) + " s";
+    }
+    const minutes = Math.floor(etaSeconds / 60);
+    const seconds = Math.round(etaSeconds % 60);
+    if (minutes < 60) {
+      const mm = String(minutes);
+      const ss = String(seconds).padStart(2, "0");
+      return mm + ":" + ss + " min";
+    }
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    const mm = String(remMinutes).padStart(2, "0");
+    return String(hours) + ":" + mm + " h";
+  }
+
+  return {
+    start(total) {
+      totalWork = typeof total === "number" ? total : 0;
+      startTime = now();
+      lastUpdateTime = startTime;
+      lastCompleted = 0;
+      smoothedThroughput = 0;
+      sampleCount = 0;
+      stopped = false;
+    },
+    update(completed) {
+      if (stopped) return;
+      const t = now();
+      if (!startTime) {
+        startTime = t;
+        lastUpdateTime = t;
+      }
+      const deltaCompleted = completed - lastCompleted;
+      const deltaTime = t - lastUpdateTime;
+      if (deltaCompleted <= 0 || deltaTime < 200) {
+        lastCompleted = completed;
+        lastUpdateTime = t;
+        return;
+      }
+      const instantThroughput = deltaCompleted / (deltaTime / 1000);
+      if (smoothedThroughput === 0) {
+        smoothedThroughput = instantThroughput;
+      } else {
+        smoothedThroughput = alpha * instantThroughput + (1 - alpha) * smoothedThroughput;
+      }
+      lastCompleted = completed;
+      lastUpdateTime = t;
+      sampleCount += 1;
+    },
+    getEta() {
+      if (stopped || !startTime || totalWork <= 0 || smoothedThroughput <= 0) {
+        return { seconds: null, formatted: "" };
+      }
+      const elapsed = now() - startTime;
+      if (sampleCount < minSamples || elapsed < minElapsedMs) {
+        return { seconds: null, formatted: "" };
+      }
+      const remaining = Math.max(0, totalWork - lastCompleted);
+      if (remaining <= 0) {
+        return { seconds: 0, formatted: "< 1 s" };
+      }
+      const etaSeconds = remaining / smoothedThroughput;
+      return { seconds: etaSeconds, formatted: formatEta(etaSeconds) };
+    },
+    stop() {
+      stopped = true;
+    }
+  };
+}
+
 /**
  * Wrapper for stochastic Monte-Carlo simulation.
  * Calls the unified simulate() function with volatility parameter.
@@ -3010,7 +3100,7 @@ function aggregateSorrData(allSorrData, params) {
 function runMonteCarloWithPool(params, iterations, volatility, showIndividual, mcOptions) {
   return new Promise((resolve, reject) => {
     const workerCount = getOptimalWorkerCount(iterations);
-    
+    const etaMc = createEtaTracker({ minSamples: 3, minElapsedMs: 1500, alpha: 0.3 });
     // KORRIGIERT: Auch bei workerCount === 1 den Pool-Modus (run-chunk) nutzen,
     // damit identische Ergebnisse wie bei mehreren Workern (deterministisches Seeding).
     // Der Legacy-'start'-Modus hat ein anderes Seeding-Schema und liefert abweichende Ergebnisse.
@@ -3022,6 +3112,7 @@ function runMonteCarloWithPool(params, iterations, volatility, showIndividual, m
     }
     
     mcWorkerRunning = true;
+    etaMc.start(iterations);
     mcProgressTextEl.textContent = `Starte ${workerCount} Worker...`;
     
     const iterationsPerWorker = Math.floor(iterations / workerCount);
@@ -3048,7 +3139,10 @@ function runMonteCarloWithPool(params, iterations, volatility, showIndividual, m
             const totalProgress = workerProgress.reduce((a, b) => a + b, 0);
             const pct = Math.round((totalProgress / iterations) * 100);
             mcProgressEl.value = pct;
-            mcProgressTextEl.textContent = `${totalProgress} / ${iterations} (${pct}%) - ${workerCount} Worker`;
+            etaMc.update(totalProgress);
+            const eta = etaMc.getEta();
+            const etaText = eta.formatted ? `, ETA ${eta.formatted}` : "";
+            mcProgressTextEl.textContent = `${totalProgress} / ${iterations} (${pct}%) - ${workerCount} Worker${etaText}`;
             break;
           case 'chunk-complete':
             allRawData.push(rawData);
@@ -3057,6 +3151,8 @@ function runMonteCarloWithPool(params, iterations, volatility, showIndividual, m
             if (completedWorkers === workerCount) {
               mcWorkerRunning = false;
               terminateMcWorkerPool();
+              etaMc.update(iterations);
+              etaMc.stop();
               mcProgressTextEl.textContent = "Aggregiere Ergebnisse...";
               const results = aggregateMcResults(allRawData, allSamplePaths, params, mcOptions, volatility);
               results.showIndividual = showIndividual;
@@ -3072,6 +3168,7 @@ function runMonteCarloWithPool(params, iterations, volatility, showIndividual, m
               hasError = true;
               mcWorkerRunning = false;
               terminateMcWorkerPool();
+              etaMc.stop();
               reject(new Error(message));
             }
             break;
@@ -3082,6 +3179,7 @@ function runMonteCarloWithPool(params, iterations, volatility, showIndividual, m
           hasError = true;
           mcWorkerRunning = false;
           terminateMcWorkerPool();
+          etaMc.stop();
           reject(new Error(err.message || 'Worker-Fehler'));
         }
       };
@@ -3170,6 +3268,9 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
     switchToTab("monte-carlo");
     if (mcEmptyStateEl) mcEmptyStateEl.style.display = "none";
     if (mcResultsEl) mcResultsEl.style.display = "block";
+    if (mcResultsEl && typeof mcResultsEl.scrollIntoView === "function") {
+      mcResultsEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
     
     // Prüfe auf optimistische Parameter
     const paramWarnings = checkOptimisticParameters(params, volatility);
@@ -3314,6 +3415,7 @@ mcGraphCanvas?.addEventListener("mouseleave", hideTooltip);
 let optimizerWorker = null;
 let lastOptimization = null;
 let isOptimizing = false;
+let optimizerEtaTracker = null;
 
 // UI-Elemente für Optimierung
 const btnOptimize = document.getElementById("btn-optimize");
@@ -3421,7 +3523,21 @@ function initOptimizerWorker() {
                 candInfo = `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_net}€`;
               }
             }
-            optimizeProgressText.textContent = `${current}/${total} (${percent}%) ${candInfo}`;
+            let baseText = `${current}/${total} (${percent}%)`;
+            if (optimizerEtaTracker && typeof total === "number" && total > 0) {
+              if (current === 1) {
+                optimizerEtaTracker.start(total);
+              }
+              optimizerEtaTracker.update(current);
+              const eta = optimizerEtaTracker.getEta();
+              if (eta.formatted) {
+                baseText += `, ETA ${eta.formatted}`;
+              }
+            }
+            if (candInfo) {
+              baseText += ` ${candInfo}`;
+            }
+            optimizeProgressText.textContent = baseText;
           }
           break;
           
@@ -3478,6 +3594,7 @@ function startOptimization() {
       handleOptimizationError('Web Worker nicht verfügbar. Optimierung kann nicht durchgeführt werden.');
       return;
     }
+    optimizerEtaTracker = createEtaTracker({ minSamples: 3, minElapsedMs: 2000, alpha: 0.3 });
     
     // UI aktualisieren
     isOptimizing = true;
@@ -3522,6 +3639,10 @@ function cancelOptimization() {
   
   isOptimizing = false;
   setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
   
   if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
   messageEl.textContent = 'Optimierung abgebrochen.';
@@ -3533,6 +3654,10 @@ function cancelOptimization() {
 function handleOptimizationComplete(best, message) {
   isOptimizing = false;
   setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
   
   if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
   
@@ -3561,6 +3686,10 @@ function handleOptimizationComplete(best, message) {
 function handleOptimizationError(errorMessage) {
   isOptimizing = false;
   setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
   
   if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
   
@@ -3585,17 +3714,14 @@ function setOptimizingState(optimizing) {
   if (btnOptimize) {
     btnOptimize.disabled = optimizing;
     // Nur Text ändern, SVG-Icon beibehalten
-    const textNode = Array.from(btnOptimize.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+    const textNode = Array.from(btnOptimize.childNodes).find(
+      n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0
+    );
     if (textNode) {
       textNode.textContent = optimizing ? ' Optimiere...' : ' Parameter optimieren';
     } else if (!optimizing) {
-      // Falls kein Textknoten gefunden, Button-Inhalt wiederherstellen
-      btnOptimize.innerHTML = `
-        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-        </svg>
-        Parameter optimieren
-      `;
+      // Falls kein Textknoten gefunden, Button-Text wiederherstellen
+      btnOptimize.textContent = 'Parameter optimieren';
     }
   }
   if (btnMc) btnMc.disabled = optimizing;
