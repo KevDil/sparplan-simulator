@@ -35,41 +35,17 @@
  * - Optional: LIFO (nur zur Analyse, NICHT gesetzeskonform für Privatanleger)
  */
 
-const TAX_RATE_BASE = 0.25; // Kapitalertragsteuer
-const SOLI_RATE = 0.055; // Solidaritätszuschlag auf KESt
-// Teilfreistellung nach § 20 InvStG - steuerpflichtiger Anteil
-const TEILFREISTELLUNG_MAP = {
-  aktien: 0.7,  // 30% steuerfrei bei Aktienfonds (≥51% Aktien)
-  misch: 0.85,  // 15% steuerfrei bei Mischfonds (≥25% Aktien)
-  renten: 1.0,  // 0% steuerfrei bei Rentenfonds/Andere
-};
-const SPARERPAUSCHBETRAG_SINGLE = 1000;
-const SPARERPAUSCHBETRAG_VERHEIRATET = 2000;
-const KIRCHENSTEUER_SATZ_8 = 0.08; // Bayern, Baden-Württemberg
-const KIRCHENSTEUER_SATZ_9 = 0.09; // Restliche Bundesländer
+// HINWEIS: Steuerkonstanten (TAX_RATE_BASE, SOLI_RATE, TEILFREISTELLUNG_MAP, etc.)
+// und Simulationskonstanten (MONTHS_PER_YEAR, INITIAL_ETF_PRICE) sind in simulation-core.js definiert
 
-// Berechnet effektiven Steuersatz inkl. Kirchensteuer.
-// Hinweis: Bei KiSt darf die Gesamtbelastung nicht unter die 26,375% (ohne KiSt) fallen.
-// Wir nutzen die in der Praxis verwendeten Effektiv-Sätze (Kirchensteuerabzugsverfahren).
-function calculateTaxRate(kirchensteuerSatz = 0) {
-  const basePlusSoli = TAX_RATE_BASE * (1 + SOLI_RATE); // 26,375% ohne KiSt
-
-  if (kirchensteuerSatz === 0) return basePlusSoli;
-
-  // Effektivbelastung laut KiSt-Abzugsverfahren (gerundet):
-  // 8% KiSt: ~27,82%, 9% KiSt: ~27,99%
-  if (kirchensteuerSatz === KIRCHENSTEUER_SATZ_8) return 0.27818;
-  if (kirchensteuerSatz === KIRCHENSTEUER_SATZ_9) return 0.27995;
-
-  // Fallback: additiver Aufschlag (konservativ, etwas höher als basePlusSoli)
-  return basePlusSoli + TAX_RATE_BASE * kirchensteuerSatz;
-}
-const MONTHS_PER_YEAR = 12;
-const INITIAL_ETF_PRICE = 100;
+// UI-spezifische Konstanten
+const SPARERPAUSCHBETRAG_VERHEIRATET = 2000; // Nicht in simulation-core.js
 const Y_AXIS_STEPS = 5;
 const STORAGE_KEY = "etf_simulator_params";
+const THEME_STORAGE_KEY = "etf_simulator_theme";
 
 const nf0 = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const nf2 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const form = document.getElementById("sim-form");
@@ -77,6 +53,7 @@ const graphCanvas = document.getElementById("graph");
 const tooltip = document.getElementById("tooltip");
 const messageEl = document.getElementById("message");
 const tableBody = document.querySelector("#year-table tbody");
+const themeToggleBtn = document.getElementById("btn-theme-toggle");
 
 let graphState = null;
 let lastHistory = [];
@@ -86,31 +63,7 @@ let stdUseLogScale = false; // Standard: lineare Skala für Standard-Chart
 let showRealStats = false; // Toggle: Nominale vs. inflationsbereinigte Statistiken
 
 // ============ UTILITY FUNCTIONS ============
-
-function toMonthlyRate(annualPercent) {
-  return Math.pow(1 + annualPercent / 100, 1 / MONTHS_PER_YEAR) - 1;
-}
-
-// Konvertiert jährliche Volatilität zu monatlicher
-function toMonthlyVolatility(annualVolatility) {
-  return annualVolatility / Math.sqrt(12);
-}
-
-// Globaler RNG - wird für Seeded Monte-Carlo überschrieben
-let currentRng = Math.random;
-
-// Box-Muller Transform für Normalverteilung (für Monte-Carlo)
-// Nutzt currentRng für reproduzierbare Ergebnisse wenn Seed gesetzt
-function randomNormal(mean = 0, stdDev = 1) {
-  let u1, u2;
-  do {
-    u1 = currentRng();
-    u2 = currentRng();
-  } while (u1 === 0);
-  
-  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-  return z0 * stdDev + mean;
-}
+// HINWEIS: Kernfunktionen (simulate, randomNormal, percentile, etc.) sind in simulation-core.js definiert
 
 function readNumber(id, { min = null, max = null, allowZero = true } = {}) {
   const el = document.getElementById(id);
@@ -146,6 +99,38 @@ function loadFromStorage() {
     return data ? JSON.parse(data) : null;
   } catch (e) {
     return null;
+  }
+}
+
+function applyTheme(theme) {
+  const body = document.body;
+  if (!body) return;
+  if (theme === "light") {
+    body.classList.add("theme-light");
+  } else {
+    body.classList.remove("theme-light");
+  }
+}
+
+function initThemeFromStorage() {
+  let storedTheme = null;
+  try {
+    storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (e) {
+    storedTheme = null;
+  }
+
+  applyTheme(storedTheme === "light" ? "light" : "dark");
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", () => {
+      const isLight = document.body.classList.contains("theme-light");
+      const nextTheme = isLight ? "dark" : "light";
+      applyTheme(nextTheme);
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch (e) { /* ignore */ }
+    });
   }
 }
 
@@ -387,6 +372,8 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     ["Kapitalerhalt-Rate (nominal)", `${results.capitalPreservationRate.toFixed(1)}%`],
     ["Kapitalerhalt-Rate (real/inflationsbereinigt)", `${results.capitalPreservationRateReal.toFixed(1)}%`],
     [`Pleite-Risiko (Entnahmephase: <${ruinThreshold}% Rentenbeginn-Vermögen oder Shortfall)`, `${results.ruinProbability.toFixed(1)}%`],
+    ["Notgroschen wird gefüllt (Monte-Carlo)", `${(results.emergencyFillProbability ?? 0).toFixed(1)}%`],
+    ["Zeit bis Notgroschen voll (Median, Jahre)", results.emergencyMedianFillYears != null ? results.emergencyMedianFillYears.toFixed(2) : "nie/kein Ziel"],
     [],
     ["=== ENDVERMÖGEN NOMINAL ===", ""],
     ["Endvermögen (Median)", results.medianEnd.toFixed(2)],
@@ -798,6 +785,8 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
       ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
       ["Pleite-Risiko (Pfad)", `${results.ruinProbability.toFixed(1)}%`],
       ["Vermögen bei Rentenbeginn", formatCurrency(results.retirementMedian)],
+      ["Notgroschen gefüllt", `${(results.emergencyFillProbability ?? 0).toFixed(1)}%`],
+      ["Zeit bis TG-Ziel", results.emergencyMedianFillYears != null ? `${nf1.format(results.emergencyMedianFillYears)} Jahre` : "nie/kein Ziel"],
     ];
     
     const leftX = margin;
@@ -948,992 +937,17 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
   }
 }
 
-// ============ LOT CONSOLIDATION (Performance) ============
+// ============ SIMULATION CORE ============
+// HINWEIS: consolidateLots, sellEtfOptimized, sellEtfGross, coverTaxWithSavingsAndEtf, simulate
+// sind jetzt in simulation-core.js definiert (für Worker-Kompatibilität)
 
-/**
- * Konsolidiert ETF-Lots mit gleichem Kaufpreis (nach Rundung), um die Array-Größe zu reduzieren.
- * Wird jährlich aufgerufen, um bei langen Simulationen die Performance zu verbessern.
- * @param {Array} etfLots - Array von {amount, price, monthIdx}
- * @param {number} priceTolerance - Preistoleranz für Zusammenführung (Standard: 0.01 = 1 Cent)
- * @returns {Array} Konsolidiertes Lot-Array
- */
-function consolidateLots(etfLots, priceTolerance = 0.01) {
-  if (etfLots.length <= 1) return etfLots;
-  
-  // Gruppiere Lots nach gerundetem Preis
-  const grouped = new Map();
-  
-  for (const lot of etfLots) {
-    if (lot.amount <= 0) continue;
-    
-    // Runde Preis auf 2 Dezimalstellen für Gruppierung
-    const roundedPrice = Math.round(lot.price / priceTolerance) * priceTolerance;
-    const key = roundedPrice.toFixed(4);
-    
-    if (grouped.has(key)) {
-      const existing = grouped.get(key);
-      // Gewichteter Durchschnittspreis
-      const totalAmount = existing.amount + lot.amount;
-      const avgPrice = (existing.price * existing.amount + lot.price * lot.amount) / totalAmount;
-      existing.amount = totalAmount;
-      existing.price = avgPrice;
-      // Behalte ältesten monthIdx (für FIFO-Reihenfolge)
-      existing.monthIdx = Math.min(existing.monthIdx, lot.monthIdx);
-    } else {
-      grouped.set(key, { ...lot });
-    }
-  }
-  
-  // Konvertiere Map zurück zu Array, sortiert nach monthIdx (FIFO-Ordnung)
-  return Array.from(grouped.values()).sort((a, b) => a.monthIdx - b.monthIdx);
-}
+// ENTFERNT: sellEtfOptimized - jetzt in simulation-core.js
 
-// ============ ETF SELLING (EXTRACTED) ============
+/* ENTFERNT: ~950 Zeilen duplizierter Code (sellEtfOptimized, sellEtfGross, coverTaxWithSavingsAndEtf, simulate)
+   Diese Funktionen sind jetzt in simulation-core.js definiert und werden von dort geladen.
+   Siehe: importScripts('simulation-core.js') in den Workern
+*/
 
-/**
- * Verkauft ETF-Anteile steueroptimiert mit Verlusttopf-Verrechnung.
- * Reihenfolge: 1) Teilfreistellung → 2) ETF-Verlusttopf → 3) Sparerpauschbetrag → 4) Steuer
- * Bei Verlusten: Verlust (nach Teilfreistellung) erhöht den ETF-Verlusttopf.
- * 
- * @param {number} remaining - Benötigter Netto-Betrag
- * @param {Array} etfLots - Array von Lots {amount, price, monthIdx}
- * @param {number} currentEtfPrice - Aktueller ETF-Preis
- * @param {number} yearlyUsedFreibetrag - Bereits genutzter Freibetrag im Jahr
- * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
- * @param {number} taxRate - Effektiver Steuersatz
- * @param {number} lossPot - Allgemeiner Verlusttopf (Startwert)
- * @param {boolean} useFifo - true = FIFO, false = LIFO
- * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
- * @returns {Object} { remaining, taxPaid, yearlyUsedFreibetrag, lossPot, grossProceeds, taxableGainTotal }
- */
-function sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
-  let taxPaid = 0;
-  let freibetragUsed = yearlyUsedFreibetrag;
-  let lossPot = lossPotStart;
-  let grossProceeds = 0; // Brutto-Verkaufserlös für Vorabpauschale-Tracking
-  let taxableGainTotal = 0; // Steuerpflichtiger Gewinn/Verlust gesamt (nach Teilfreistellung)
-  
-  while (remaining > 0.01 && etfLots.length) {
-    // FIFO: Erstes Element (ältestes Lot), LIFO: Letztes Element (neuestes Lot)
-    const lotIndex = useFifo ? 0 : etfLots.length - 1;
-    const lot = etfLots[lotIndex];
-    const gainPerShare = currentEtfPrice - lot.price;
-    const remainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
-    let sharesNeeded;
-
-    if (gainPerShare > 0) {
-      // Gewinn: Berechne wie viele Shares wir verkaufen müssen
-      const taxableGainPerShare = gainPerShare * teilfreistellung;
-      
-      // Verlusttopf deckt wie viele Shares ab? (zuerst, banknah)
-      const lossPotCoversShares = Math.min(
-        taxableGainPerShare > 0 ? lossPot / taxableGainPerShare : Number.POSITIVE_INFINITY,
-        lot.amount
-      );
-      
-      // Freibetrag deckt wie viele zusätzliche Shares ab? (danach)
-      const freibetragCoversShares = Math.min(
-        taxableGainPerShare > 0 ? remainingFreibetrag / taxableGainPerShare : Number.POSITIVE_INFINITY,
-        lot.amount - lossPotCoversShares
-      );
-      
-      const totalTaxFreeShares = lossPotCoversShares + freibetragCoversShares;
-      const sharesIfTaxFree = remaining / currentEtfPrice;
-
-      if (sharesIfTaxFree <= totalTaxFreeShares) {
-        sharesNeeded = sharesIfTaxFree;
-      } else {
-        const netFromTaxFree = totalTaxFreeShares * currentEtfPrice;
-        const stillNeeded = remaining - netFromTaxFree;
-        const taxPerShareFull = taxableGainPerShare * taxRate;
-        const netPerShareTaxed = currentEtfPrice - taxPerShareFull;
-        if (netPerShareTaxed <= 0) break;
-        const additionalShares = stillNeeded / netPerShareTaxed;
-        sharesNeeded = totalTaxFreeShares + additionalShares;
-      }
-    } else {
-      // Verlust oder Break-Even: Keine Steuer, Verlust erhöht Verlusttopf
-      sharesNeeded = remaining / currentEtfPrice;
-    }
-
-    const sharesToSell = Math.min(sharesNeeded, lot.amount);
-    grossProceeds += sharesToSell * currentEtfPrice;
-    
-    // Brutto-Gewinn/Verlust des Lots
-    const bruttoGainLoss = sharesToSell * gainPerShare;
-    // Steuerpflichtiger Betrag nach Teilfreistellung
-    const taxableGainLoss = bruttoGainLoss * teilfreistellung;
-    taxableGainTotal += taxableGainLoss;
-    
-    let partTax = 0;
-    
-    if (taxableGainLoss > 0) {
-      // GEWINN: Reihenfolge Verlusttopf → Sparerpauschbetrag → Steuer (banknah)
-      // 1. Verlusttopf nutzen
-      const usedLossPot = Math.min(taxableGainLoss, lossPot);
-      lossPot -= usedLossPot;
-      const afterLossPot = taxableGainLoss - usedLossPot;
-      
-      // 2. Sparerpauschbetrag nutzen
-      const currentRemainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
-      const usedFreibetrag = Math.min(afterLossPot, currentRemainingFreibetrag);
-      freibetragUsed += usedFreibetrag;
-      
-      // 3. Rest versteuern
-      const taxableAfterAll = afterLossPot - usedFreibetrag;
-      partTax = taxableAfterAll * taxRate;
-    } else if (taxableGainLoss < 0) {
-      // VERLUST: Erhöht den ETF-Verlusttopf (bereits nach Teilfreistellung, d.h. 70% des Verlustes)
-      lossPot += Math.abs(taxableGainLoss);
-    }
-    // Bei 0: Keine Aktion
-    
-    const partNet = sharesToSell * currentEtfPrice - partTax;
-    remaining -= partNet;
-    taxPaid += partTax;
-
-    if (sharesNeeded >= lot.amount) {
-      // FIFO: Erstes Element entfernen, LIFO: Letztes Element entfernen
-      if (useFifo) {
-        etfLots.shift();
-      } else {
-        etfLots.pop();
-      }
-    } else {
-      lot.amount -= sharesToSell;
-    }
-  }
-  
-  return { 
-    remaining, 
-    taxPaid, 
-    yearlyUsedFreibetrag: freibetragUsed, 
-    lossPot,
-    grossProceeds,
-    taxableGainTotal 
-  };
-}
-
-/**
- * Verkauft ETF-Anteile für einen BRUTTO-Betrag (vor Steuern).
- * Der Nutzer erhält den Brutto-Betrag abzüglich Steuern als Netto.
- * @param {number} grossAmount - Gewünschter Brutto-Verkaufserlös
- * @param {Array} etfLots - Array von Lots {amount, price, monthIdx}
- * @param {number} currentEtfPrice - Aktueller ETF-Preis
- * @param {number} yearlyUsedFreibetrag - Bereits genutzter Freibetrag im Jahr
- * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
- * @param {number} taxRate - Effektiver Steuersatz
- * @param {number} lossPot - Allgemeiner Verlusttopf
- * @param {boolean} useFifo - true = FIFO, false = LIFO
- * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
- * @returns {Object} { netProceeds, taxPaid, yearlyUsedFreibetrag, lossPot, shortfall }
- */
-function sellEtfGross(grossAmount, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
-  let taxPaid = 0;
-  let freibetragUsed = yearlyUsedFreibetrag;
-  let lossPot = lossPotStart;
-  let grossRemaining = grossAmount;
-  let netProceeds = 0;
-  
-  while (grossRemaining > 0.01 && etfLots.length) {
-    const lotIndex = useFifo ? 0 : etfLots.length - 1;
-    const lot = etfLots[lotIndex];
-    const gainPerShare = currentEtfPrice - lot.price;
-    
-    // Berechne wie viele Shares wir für den Brutto-Betrag verkaufen müssen
-    const sharesNeeded = grossRemaining / currentEtfPrice;
-    const sharesToSell = Math.min(sharesNeeded, lot.amount);
-    const grossFromSale = sharesToSell * currentEtfPrice;
-    
-    // Gewinn/Verlust berechnen
-    const bruttoGainLoss = sharesToSell * gainPerShare;
-    const taxableGainLoss = bruttoGainLoss * teilfreistellung;
-    
-    let partTax = 0;
-    
-    if (taxableGainLoss > 0) {
-      // GEWINN: Reihenfolge Verlusttopf → Sparerpauschbetrag → Steuer
-      const usedLossPot = Math.min(taxableGainLoss, lossPot);
-      lossPot -= usedLossPot;
-      const afterLossPot = taxableGainLoss - usedLossPot;
-      
-      const remainingFreibetrag = Math.max(0, sparerpauschbetrag - freibetragUsed);
-      const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
-      freibetragUsed += usedFreibetrag;
-      
-      const taxableAfterAll = afterLossPot - usedFreibetrag;
-      partTax = taxableAfterAll * taxRate;
-    } else if (taxableGainLoss < 0) {
-      // VERLUST: Erhöht den Verlusttopf
-      lossPot += Math.abs(taxableGainLoss);
-    }
-    
-    // Netto = Brutto - Steuer
-    const partNet = grossFromSale - partTax;
-    netProceeds += partNet;
-    taxPaid += partTax;
-    grossRemaining -= grossFromSale;
-    
-    if (sharesNeeded >= lot.amount) {
-      if (useFifo) {
-        etfLots.shift();
-      } else {
-        etfLots.pop();
-      }
-    } else {
-      lot.amount -= sharesToSell;
-    }
-  }
-  
-  const shortfall = grossRemaining > 0.01 ? grossRemaining : 0;
-  
-  return { 
-    netProceeds, 
-    taxPaid, 
-    yearlyUsedFreibetrag: freibetragUsed, 
-    lossPot,
-    shortfall
-  };
-}
-
-/**
- * Deckt Steuerzahlungen ab: zuerst TG, danach ETF-Verkauf inkl. Steuer auf realisierte Gewinne.
- * Liefert bezahlte Steuer (Original + Verkaufssteuer), aktualisiertes TG, Freibetrag, Verlusttopf sowie Shortfall.
- * 
- * @param {number} taxAmount - Zu zahlende Steuer
- * @param {number} savings - Tagesgeld-Guthaben
- * @param {Array} etfLots - ETF-Lots
- * @param {number} currentEtfPrice - Aktueller ETF-Preis
- * @param {number} yearlyUsedFreibetrag - Genutzter Freibetrag im Jahr
- * @param {number} sparerpauschbetrag - Jährlicher Sparerpauschbetrag
- * @param {number} taxRate - Steuersatz
- * @param {number} lossPot - Allgemeiner Verlusttopf
- * @param {boolean} useFifo - FIFO oder LIFO
- * @param {number} teilfreistellung - Steuerpflichtiger Anteil (0.7 Aktien, 0.85 Misch, 1.0 Renten)
- */
-function coverTaxWithSavingsAndEtf(taxAmount, savings, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPotStart = 0, useFifo = true, teilfreistellung = 0.7) {
-  if (taxAmount <= 0) {
-    return {
-      savings,
-      yearlyUsedFreibetrag,
-      lossPot: lossPotStart,
-      taxPaidOriginal: 0,
-      saleTax: 0,
-      totalTaxRecorded: 0,
-      shortfall: 0,
-    };
-  }
-
-  let remainingTax = taxAmount;
-  let lossPot = lossPotStart;
-
-  const useCash = Math.min(savings, remainingTax);
-  savings -= useCash;
-  remainingTax -= useCash;
-
-  let saleTax = 0;
-  if (remainingTax > 0.01 && etfLots.length) {
-    const sellResult = sellEtfOptimized(remainingTax, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, useFifo, teilfreistellung);
-    remainingTax = sellResult.remaining;
-    saleTax = sellResult.taxPaid;
-    yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-    lossPot = sellResult.lossPot;
-  }
-
-  remainingTax = Math.max(0, remainingTax);
-  const taxPaidOriginal = taxAmount - remainingTax;
-  const shortfall = remainingTax > 0.01 ? remainingTax : 0;
-  const totalTaxRecorded = taxPaidOriginal + saleTax;
-
-  return {
-    savings,
-    yearlyUsedFreibetrag,
-    lossPot,
-    taxPaidOriginal,
-    saleTax,
-    totalTaxRecorded,
-    shortfall,
-  };
-}
-
-/**
- * Unified simulation function for both standard and Monte-Carlo simulations.
- * @param {Object} params - Simulation parameters
- * @param {number} volatility - Annual volatility for stochastic simulation (0 = deterministic)
- * @returns {Array} History array with monthly data points
- */
-function simulate(params, volatility = 0) {
-  const {
-    start_savings,
-    start_etf,
-    start_etf_cost_basis = 0,
-    monthly_savings,
-    monthly_etf,
-    savings_rate_pa,
-    etf_rate_pa,
-    etf_ter_pa = 0,
-    savings_target,
-    annual_raise_percent,
-    savings_years,
-    withdrawal_years,
-    monthly_payout_net,
-    monthly_payout_percent,
-    withdrawal_min = 0,
-    withdrawal_max = 0,
-    inflation_adjust_withdrawal = true,
-    special_payout_net_savings,
-    special_interval_years_savings,
-    inflation_adjust_special_savings = true,
-    special_payout_net_withdrawal,
-    special_interval_years_withdrawal,
-    inflation_adjust_special_withdrawal = true,
-    inflation_rate_pa = 0,
-    sparerpauschbetrag = SPARERPAUSCHBETRAG_SINGLE,
-    kirchensteuer = "keine",
-    basiszins = 2.53,
-    use_lifo = false,
-    rent_is_gross = false,
-    capital_preservation_enabled = false,
-    capital_preservation_threshold = 80,
-    capital_preservation_reduction = 25,
-    capital_preservation_recovery = 10,
-    loss_pot: initialLossPot = 0,
-    fondstyp = "aktien",
-  } = params;
-  
-  // Stochastic mode: volatility > 0 aktiviert Monte-Carlo-Modus
-  const isStochastic = volatility > 0;
-  const monthlyVolatility = isStochastic ? toMonthlyVolatility(volatility / 100) : 0;
-
-  // Teilfreistellung basierend auf Fondstyp (§ 20 InvStG)
-  const teilfreistellung = TEILFREISTELLUNG_MAP[fondstyp] || TEILFREISTELLUNG_MAP.aktien;
-
-  // Steuersatz berechnen (inkl. Kirchensteuer falls gewählt)
-  let kirchensteuerSatz = 0;
-  if (kirchensteuer === "8") kirchensteuerSatz = KIRCHENSTEUER_SATZ_8;
-  else if (kirchensteuer === "9") kirchensteuerSatz = KIRCHENSTEUER_SATZ_9;
-  const taxRate = calculateTaxRate(kirchensteuerSatz);
-
-  const history = [];
-  let savings = start_savings;
-  let currentEtfPrice = INITIAL_ETF_PRICE;
-  const etfLots = [];
-  if (start_etf > 0) {
-    const shares = start_etf / currentEtfPrice;
-    // Berechne Einstandspreis: wenn cost_basis angegeben und > 0, nutze diesen
-    // sonst Einstand = aktueller Wert (kein unrealisierter Gewinn)
-    const effectiveCostBasis = start_etf_cost_basis > 0 ? start_etf_cost_basis : start_etf;
-    const costPricePerShare = effectiveCostBasis / shares;
-    etfLots.push({ amount: shares, price: costPricePerShare, monthIdx: 0 });
-  }
-
-  // ETF-Rendite nach Abzug der TER
-  const effectiveEtfRate = etf_rate_pa - etf_ter_pa;
-  
-  const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
-  const monthlyEtfRate = toMonthlyRate(effectiveEtfRate);
-  const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
-  const annualRaise = annual_raise_percent / 100;
-  const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
-
-  let savingsFull = savings >= savings_target;
-  let yearlyUsedFreibetrag = 0;
-  let currentTaxYear = 0;
-  let payoutFromPercentDone = false;
-  let payoutValue = monthly_payout_net;
-  let payoutPercentPa = monthly_payout_percent;
-  let entnahmeStartTotal = null;
-  let basePayoutValue = null; // Basis-Entnahme für Inflationsanpassung
-
-  let cumulativeInflation = 1;
-  
-  // Kapitalerhalt-Modus Tracking
-  let capitalPreservationActive = false;
-  let capitalPreservationMonths = 0;
-  
-  // Vorabpauschale-Tracking: ETF-Wert und Preis am Jahresanfang
-  let etfValueYearStart = start_etf;
-  let etfPriceAtYearStart = currentEtfPrice;
-  let vorabpauschaleTaxYearly = 0;
-  
-  // Allgemeiner Verlusttopf: Fortlaufend, kein Reset am Jahreswechsel
-  // Für ETF-Verkaufsgewinne/-verluste (nach Teilfreistellung), Zinsen und Vorabpauschale
-  // Nach deutschem Steuerrecht gehören ETFs in den allgemeinen Topf (nicht Aktien-Topf,
-  // der nur für Einzelaktien gilt).
-  let lossPot = initialLossPot;
-  
-  // JAHRESWEISE STEUERLOGIK: Tracking-Variablen
-  // TG-Zinsen: Brutto ansammeln, am Jahresende versteuern
-  let yearlyAccumulatedInterestGross = 0;
-  // Vorabpauschale: Im Dezember berechnen, im Januar des Folgejahres einziehen
-  // Nutzt Freibetrag des NEUEN Jahres (daher separate Speicherung)
-  let pendingVorabpauschaleTax = 0;           // Berechnete Steuer, fällig im Januar
-  let pendingVorabpauschaleAmount = 0;        // Steuerpflichtiger Betrag für Freibetrag-Berechnung
-
-  for (let monthIdx = 1; monthIdx <= totalMonths; monthIdx += 1) {
-    const isSavingsPhase = monthIdx <= savings_years * MONTHS_PER_YEAR;
-    const yearIdx = Math.floor((monthIdx - 1) / MONTHS_PER_YEAR);
-    const monthInYear = ((monthIdx - 1) % MONTHS_PER_YEAR) + 1; // 1-12
-    let vorabpauschaleTaxPaidThisMonth = 0;
-    let taxPaidThisMonth = 0;
-    let taxShortfall = 0;
-    
-    // Inflation kumulieren
-    cumulativeInflation *= (1 + monthlyInflationRate);
-    const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
-    const totalEtfValueStart = totalEtfSharesStart * currentEtfPrice;
-    const totalPortfolioStart = savings + totalEtfValueStart; // Für Portfolio-Rendite (SoRR)
-
-    // ============ JAHRESWECHSEL-LOGIK ============
-    // Am Jahresanfang (Januar): Vorabpauschale des Vorjahres einziehen
-    // Diese nutzt den Freibetrag des NEUEN Jahres
-    if (yearIdx !== currentTaxYear) {
-      yearlyUsedFreibetrag = 0; // Neues Jahr, Freibetrag zurücksetzen
-      vorabpauschaleTaxYearly = 0;
-      // ZUERST: Vorabpauschale des Vorjahres einziehen (falls vorhanden)
-      // Reihenfolge: Verlusttopf → Sparerpauschbetrag → Rest versteuern
-      if (pendingVorabpauschaleAmount > 0) {
-        // 1. Verlusttopf nutzen
-        const usedLossPot = Math.min(pendingVorabpauschaleAmount, lossPot);
-        lossPot -= usedLossPot;
-        const afterLossPot = pendingVorabpauschaleAmount - usedLossPot;
-        
-        // 2. Sparerpauschbetrag nutzen (neues Jahr, noch voll verfügbar)
-        const remainingFreibetrag = sparerpauschbetrag;
-        const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
-        yearlyUsedFreibetrag = usedFreibetrag;
-        
-        // 3. Rest versteuern
-        const taxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
-        const dueTax = taxableAfterAll * taxRate;
-
-        const coverResult = coverTaxWithSavingsAndEtf(
-          dueTax,
-          savings,
-          etfLots,
-          currentEtfPrice,
-          yearlyUsedFreibetrag,
-          sparerpauschbetrag,
-          taxRate,
-          lossPot,
-          !use_lifo,
-          teilfreistellung
-        );
-        savings = coverResult.savings;
-        yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
-        lossPot = coverResult.lossPot;
-        vorabpauschaleTaxPaidThisMonth = coverResult.taxPaidOriginal;
-        vorabpauschaleTaxYearly = coverResult.taxPaidOriginal;
-        taxPaidThisMonth += coverResult.totalTaxRecorded;
-        taxShortfall += coverResult.shortfall;
-      } else {
-        yearlyUsedFreibetrag = 0;
-        vorabpauschaleTaxYearly = 0;
-      }
-      
-      // Dann: Jahreswechsel-Variablen zurücksetzen
-      currentTaxYear = yearIdx;
-      etfValueYearStart = totalEtfValueStart;
-      etfPriceAtYearStart = currentEtfPrice;
-      yearlyAccumulatedInterestGross = 0;
-      pendingVorabpauschaleTax = 0;
-      pendingVorabpauschaleAmount = 0;
-    }
-
-    // Wertentwicklung vor Cashflows
-    // Bei stochastischer Simulation: GBM (Geometric Brownian Motion)
-    // Bei deterministischer Simulation: feste monatliche Rendite
-    let monthlyEtfReturn;
-    if (isStochastic) {
-      // GBM: S_t+1 = S_t * exp((μ - σ²/2) + σ*Z)
-      const continuousMonthlyRate = Math.log(1 + monthlyEtfRate);
-      const drift = continuousMonthlyRate - 0.5 * monthlyVolatility * monthlyVolatility;
-      const z = randomNormal(0, 1);
-      monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z);
-      currentEtfPrice *= monthlyEtfReturn;
-    } else {
-      monthlyEtfReturn = 1 + monthlyEtfRate;
-      currentEtfPrice *= monthlyEtfReturn;
-    }
-    const etfGrowth = totalEtfValueStart * (monthlyEtfReturn - 1);
-
-    const savingsInterest = savings * monthlySavingsRate;
-    
-    // JAHRESWEISE STEUERLOGIK: TG-Zinsen brutto ansammeln
-    // Besteuerung erfolgt am Jahresende (Dezember), nicht monatlich
-    let savingsInterestTax = 0;
-    yearlyAccumulatedInterestGross += savingsInterest;
-    savings += savingsInterest; // Zinsen brutto gutschreiben
-
-    let savings_contrib = 0;
-    let etf_contrib = 0;
-    let overflow = 0;
-    let withdrawal = 0;
-    let tax_paid = taxPaidThisMonth; // Startet mit evtl. Vorabpauschale vom Januar (inkl. Verkaufssteuer)
-    let withdrawal_paid = 0;
-    let withdrawal_net = 0;
-    let monthlyPayout = 0; // Reguläre monatliche Entnahme (ohne Sonderausgaben)
-    let capitalPreservationActiveThisMonth = false;
-    let netWithdrawalThisMonth = 0;
-
-    // ANSPARPHASE
-    if (isSavingsPhase) {
-      const raiseFactor = Math.pow(1 + annualRaise, yearIdx);
-      const currMonthlySav = monthly_savings * raiseFactor;
-      const currMonthlyEtf = monthly_etf * raiseFactor;
-
-      if (savingsFull) {
-        etf_contrib = currMonthlyEtf + currMonthlySav;
-      } else {
-        savings += currMonthlySav;
-        savings_contrib = currMonthlySav;
-        etf_contrib = currMonthlyEtf;
-      }
-
-      if (savings > savings_target) {
-        overflow = savings - savings_target;
-        savings = savings_target;
-        etf_contrib += overflow;
-        savingsFull = true;
-      }
-
-      if (etf_contrib > 0) {
-        const newShares = etf_contrib / currentEtfPrice;
-        etfLots.push({ amount: newShares, price: currentEtfPrice, monthIdx });
-      }
-
-      // Sonderausgaben Ansparphase
-      const inSpecial = special_interval_years_savings > 0
-        && monthIdx % (special_interval_years_savings * MONTHS_PER_YEAR) === 0
-        && monthIdx > 0;
-
-      if (inSpecial) {
-        // Inflationsanpassung der Sonderausgabe
-        // Verwende tatsächlich verstrichene Jahre (monthIdx/12) statt nullbasiertem yearIdx
-        let specialAmount = special_payout_net_savings;
-        if (inflation_adjust_special_savings) {
-          const yearsElapsed = monthIdx / MONTHS_PER_YEAR;
-          specialAmount = special_payout_net_savings * Math.pow(1 + inflation_rate_pa / 100, yearsElapsed);
-        }
-        let remaining = specialAmount;
-        withdrawal = remaining;
-
-        const extraCash = Math.max(0, savings - savings_target);
-        if (extraCash > 0) {
-          const use = Math.min(extraCash, remaining);
-          savings -= use;
-          remaining -= use;
-        }
-
-        // ETF verkaufen (steueroptimiert) - extrahierte Funktion
-        const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
-        remaining = sellResult.remaining;
-        tax_paid += sellResult.taxPaid;
-        yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-        lossPot = sellResult.lossPot;
-
-        // TG unter Ziel
-        if (remaining > 0.01) {
-          const draw = Math.min(savings, remaining);
-          savings -= draw;
-          remaining -= draw;
-          if (savings < savings_target) savingsFull = false;
-        }
-
-        if (remaining < 0) {
-          savings += Math.abs(remaining);
-          remaining = 0;
-        }
-
-        withdrawal_paid = withdrawal - Math.max(0, remaining);
-      }
-    }
-
-    // ENTNAHMEPHASE
-    else {
-      if (entnahmeStartTotal === null) {
-        const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
-        entnahmeStartTotal = savings + totalEtfShares * currentEtfPrice;
-        if (monthly_payout_percent != null && !payoutFromPercentDone) {
-          payoutValue = entnahmeStartTotal * (monthly_payout_percent / 100) / 12;
-          basePayoutValue = payoutValue;
-          payoutFromPercentDone = true;
-          payoutPercentPa = monthly_payout_percent;
-        } else if (payoutValue != null) {
-          basePayoutValue = payoutValue;
-          payoutPercentPa = entnahmeStartTotal > 0 ? (payoutValue * 12 / entnahmeStartTotal * 100) : 0;
-        }
-      }
-
-      // Inflationsanpassung der Entnahme (für beide Modi: EUR und Prozent)
-      // Die 4%-Regel: X% vom Startvermögen, dann jährlich um Inflation erhöhen
-      let currentPayout = payoutValue || 0;
-      if (inflation_adjust_withdrawal && basePayoutValue != null) {
-        // Entnahme jährlich um Inflation erhöhen (gilt für EUR UND Prozent-Modus)
-        const withdrawalYearIdx = yearIdx - savings_years;
-        currentPayout = basePayoutValue * Math.pow(1 + inflation_rate_pa / 100, withdrawalYearIdx);
-      }
-
-      // Min/Max Grenzen anwenden
-      if (withdrawal_min > 0 && currentPayout < withdrawal_min) {
-        currentPayout = withdrawal_min;
-      }
-      if (withdrawal_max > 0 && currentPayout > withdrawal_max) {
-        currentPayout = withdrawal_max;
-      }
-
-      // Kapitalerhalt-Modus: Entnahme reduzieren wenn Vermögen unter Schwelle fällt
-      if (capital_preservation_enabled && entnahmeStartTotal > 0) {
-        const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
-        const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
-        const thresholdValue = entnahmeStartTotal * (capital_preservation_threshold / 100);
-        const recoveryValue = entnahmeStartTotal * ((capital_preservation_threshold + capital_preservation_recovery) / 100);
-        
-        // Hysterese: Aktivieren bei Unterschreitung, Deaktivieren erst bei Erholung über recoveryValue
-        if (currentTotal < thresholdValue) {
-          capitalPreservationActive = true;
-        } else if (currentTotal >= recoveryValue) {
-          capitalPreservationActive = false;
-        }
-        // Sonst: Zustand beibehalten (Hysterese)
-        
-        if (capitalPreservationActive) {
-          // Entnahme um den Reduktionsprozentsatz verringern
-          currentPayout = currentPayout * (1 - capital_preservation_reduction / 100);
-          capitalPreservationActiveThisMonth = true;
-          capitalPreservationMonths++;
-        }
-      }
-
-      const requestedMonthlyPayout = currentPayout; // Gewünschte reguläre monatliche Entnahme
-      let specialExpenseThisMonth = 0;
-      let needed_net = currentPayout;
-      if (special_interval_years_withdrawal > 0
-        && monthIdx % (special_interval_years_withdrawal * MONTHS_PER_YEAR) === 0) {
-        // Inflationsanpassung der Sonderausgabe
-        // Verwende tatsächlich verstrichene Jahre (monthIdx/12) statt nullbasiertem yearIdx
-        specialExpenseThisMonth = special_payout_net_withdrawal;
-        if (inflation_adjust_special_withdrawal) {
-          const yearsElapsed = monthIdx / MONTHS_PER_YEAR;
-          specialExpenseThisMonth = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearsElapsed);
-        }
-        needed_net += specialExpenseThisMonth;
-      }
-
-      if (needed_net > 0) {
-        let remaining = needed_net;
-        withdrawal = needed_net;
-
-        const extraCash = Math.max(0, savings - savings_target);
-        if (extraCash > 0) {
-          const use = Math.min(extraCash, remaining);
-          savings -= use;
-          remaining -= use;
-          // Netto-Entnahme aus TG (steuerfrei)
-          if (rent_is_gross) {
-            netWithdrawalThisMonth += use;
-          }
-        }
-
-        // ETF verkaufen - je nach Modus unterschiedliche Logik
-        if (rent_is_gross && remaining > 0) {
-          // BRUTTO-MODUS: Verkaufe ETF für Brutto-Betrag, Steuern werden abgezogen
-          // Nutzer erhält: Brutto - Steuer = Netto
-          // WICHTIG: Für Shortfall-Analyse zählt nur echter Shortfall (nicht genug Assets),
-          // NICHT die Steuerdifferenz zwischen Brutto und Netto!
-          const sellResult = sellEtfGross(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
-          const netReceived = sellResult.netProceeds;
-          tax_paid += sellResult.taxPaid;
-          yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-          lossPot = sellResult.lossPot;
-          // remaining = echter Shortfall (konnte nicht genug ETF verkaufen)
-          remaining = sellResult.shortfall;
-          // Bei Brutto-Modus: withdrawal_paid = BRUTTO (was wir verkauft haben), nicht Netto!
-          // Damit wird die Shortfall-Analyse korrekt: shortfall nur wenn remaining > 0
-          withdrawal_paid = withdrawal - remaining;
-          // Speichere Netto separat für Statistiken (Netto-Erlös nach Steuern)
-          netWithdrawalThisMonth += netReceived;
-        } else if (remaining > 0) {
-          // NETTO-MODUS (Standard): Verkaufe genug ETF um Netto-Betrag zu erhalten
-          const sellResult = sellEtfOptimized(remaining, etfLots, currentEtfPrice, yearlyUsedFreibetrag, sparerpauschbetrag, taxRate, lossPot, !use_lifo, teilfreistellung);
-          remaining = sellResult.remaining;
-          tax_paid += sellResult.taxPaid;
-          yearlyUsedFreibetrag = sellResult.yearlyUsedFreibetrag;
-          lossPot = sellResult.lossPot;
-        }
-
-        if (remaining > 0.01) {
-          const draw = Math.min(savings, remaining);
-          savings -= draw;
-          remaining -= draw;
-          if (rent_is_gross) {
-            // Zusätzliche TG-Entnahme ist vollständig netto
-            netWithdrawalThisMonth += draw;
-          }
-        }
-
-        if (remaining < 0) {
-          savings += Math.abs(remaining);
-          remaining = 0;
-        }
-
-        // Bei Netto-Modus: Standard-Berechnung
-        if (!rent_is_gross) {
-          withdrawal_paid = withdrawal - Math.max(0, remaining);
-        }
-      }
-      
-      // KORRIGIERT: Berechne tatsächlich gezahlte monatliche Entnahme (ohne Sonderausgaben)
-      // Bei Shortfalls wird proportional gekürzt
-      if (withdrawal > 0 && withdrawal_paid < withdrawal) {
-        // Proportionale Kürzung: beide (regular + special) werden anteilig reduziert
-        const payoutRatio = withdrawal_paid / withdrawal;
-        monthlyPayout = requestedMonthlyPayout * payoutRatio;
-      } else {
-        monthlyPayout = requestedMonthlyPayout;
-      }
-    }
-
-    // ============ JAHRESENDE-LOGIK (Dezember) ============
-    // 1. TG-Zinsen des Jahres besteuern (Allg. Topf → Freibetrag des AKTUELLEN Jahres)
-    // 2. Vorabpauschale berechnen, aber erst im Januar des Folgejahres einziehen
-    let totalVorabpauschale = 0;
-    if (monthInYear === 12) {
-      // SCHRITT 1: Jährliche TG-Zinsen besteuern
-      // Reihenfolge: Verlusttopf → Sparerpauschbetrag → Rest versteuern (banknah)
-      if (yearlyAccumulatedInterestGross > 0) {
-        // 1. Verlusttopf nutzen (zuerst)
-        const usedLossPot = Math.min(yearlyAccumulatedInterestGross, lossPot);
-        lossPot -= usedLossPot;
-        const afterLossPot = yearlyAccumulatedInterestGross - usedLossPot;
-        
-        // 2. Sparerpauschbetrag nutzen (danach)
-        const remainingFreibetrag = Math.max(0, sparerpauschbetrag - yearlyUsedFreibetrag);
-        const usedFreibetrag = Math.min(afterLossPot, remainingFreibetrag);
-        yearlyUsedFreibetrag += usedFreibetrag;
-        
-        // 3. Rest versteuern
-        const taxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
-        savingsInterestTax = taxableAfterAll * taxRate;
-
-        if (savingsInterestTax > 0.01) {
-          const coverResult = coverTaxWithSavingsAndEtf(
-            savingsInterestTax,
-            savings,
-            etfLots,
-            currentEtfPrice,
-            yearlyUsedFreibetrag,
-            sparerpauschbetrag,
-            taxRate,
-            lossPot,
-            !use_lifo,
-            teilfreistellung
-          );
-          savings = coverResult.savings;
-          yearlyUsedFreibetrag = coverResult.yearlyUsedFreibetrag;
-          lossPot = coverResult.lossPot;
-          tax_paid += coverResult.totalTaxRecorded;
-          taxShortfall += coverResult.shortfall;
-        }
-      }
-      
-      // SCHRITT 2: Vorabpauschale berechnen (falls Basiszins > 0)
-      // Die Steuer wird NICHT jetzt eingezogen, sondern im Januar des Folgejahres
-      if (basiszins > 0) {
-        const yearStartMonth = yearIdx * MONTHS_PER_YEAR; // Monat 0, 12, 24, ...
-        
-        // Pro-Lot-Berechnung der Vorabpauschale
-        for (const lot of etfLots) {
-          if (lot.amount <= 0) continue;
-          
-          const boughtThisYear = lot.monthIdx > yearStartMonth;
-          
-          // Basisertrag-Grundlage: Wert am Jahresanfang (alte Lots) oder Kaufwert (neue Lots)
-          const basisertragBase = boughtThisYear 
-            ? lot.amount * lot.price  // Neue Lots: Kaufwert
-            : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
-          
-          // Zeitanteil: Für neue Lots nur anteilig (Kaufmonat bis Dezember) / 12
-          let zeitanteil = 1;
-          if (boughtThisYear) {
-            const kaufMonatImJahr = ((lot.monthIdx - 1) % MONTHS_PER_YEAR) + 1;
-            zeitanteil = (12 - kaufMonatImJahr + 1) / 12;
-          }
-          
-          // Basisertrag = Grundlage × Basiszins × 0,7 × Zeitanteil
-          // HINWEIS: Der Faktor 0,7 ist der gesetzliche Dämpfungsfaktor nach § 18 Abs. 1 InvStG,
-          // NICHT die Teilfreistellung nach § 20 InvStG! Beide haben zufällig denselben Wert.
-          const BASISERTRAG_FAKTOR = 0.7; // § 18 Abs. 1 InvStG
-          const lotBasisertrag = basisertragBase * (basiszins / 100) * BASISERTRAG_FAKTOR * zeitanteil;
-          
-          // Wertzuwachs pro Lot (unabhängig von Verkäufen anderer Lots)
-          const lotValueYearEnd = lot.amount * currentEtfPrice;
-          const lotValueStart = boughtThisYear 
-            ? lot.amount * lot.price  // Neue Lots: Kaufwert
-            : lot.amount * etfPriceAtYearStart;  // Alte Lots: Wert am Jahresanfang
-          const lotActualGain = Math.max(0, lotValueYearEnd - lotValueStart);
-          
-          // Vorabpauschale = min(Basisertrag, Wertzuwachs)
-          const lotVorabpauschale = Math.min(lotBasisertrag, lotActualGain);
-          
-          if (lotVorabpauschale > 0) {
-            totalVorabpauschale += lotVorabpauschale;
-            // Cost-Basis erhöhen (verhindert Doppelbesteuerung bei späterem Verkauf)
-            lot.price += lotVorabpauschale / lot.amount;
-          }
-        }
-        
-        if (totalVorabpauschale > 0) {
-          // Teilfreistellung nach § 20 InvStG: Steuerpflichtiger Anteil je nach Fondstyp
-          // Aktienfonds: 70%, Mischfonds: 85%, Rentenfonds: 100%
-          const taxableVorabpauschale = totalVorabpauschale * teilfreistellung;
-          
-          // WICHTIG: Steuer wird NICHT jetzt eingezogen!
-          // Stattdessen für Januar des Folgejahres vormerken
-          // Dort wird der Freibetrag des NEUEN Jahres genutzt
-          pendingVorabpauschaleAmount = taxableVorabpauschale;
-        }
-      }
-    }
-    // Hinweis: Vorabpauschale-Steuer wird im Januar des Folgejahres gezahlt (siehe Jahreswechsel-Logik)
-    
-    // Lot-Konsolidierung am Jahresende für Performance (alle 12 Monate)
-    if (monthInYear === 12 && etfLots.length > 50) {
-      const consolidated = consolidateLots(etfLots);
-      etfLots.length = 0;
-      etfLots.push(...consolidated);
-    }
-
-    // Gesamtwerte
-    const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
-    const etf_value = totalEtfShares * currentEtfPrice;
-    const total = savings + etf_value;
-
-    // Aktuelle Entnahme für diesen Monat (nach Limits)
-    const effectivePayout = isSavingsPhase ? null : (withdrawal > 0 ? withdrawal : null);
-    
-    // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden (nur für MC relevant)
-    const shortfall = withdrawal > 0 ? Math.max(0, withdrawal - withdrawal_paid) : 0;
-    
-    // Netto-Entnahme für Statistiken (unabhängig von Shortfall-Definition)
-    if (!isSavingsPhase && withdrawal > 0) {
-      if (rent_is_gross) {
-        // Im Brutto-Modus ist withdrawal_paid BRUTTO, netWithdrawalThisMonth ist Netto
-        withdrawal_net = netWithdrawalThisMonth;
-      } else {
-        // Im Netto-Modus entspricht withdrawal_paid bereits der Netto-Entnahme
-        withdrawal_net = withdrawal_paid;
-      }
-    } else {
-      withdrawal_net = 0;
-    }
-    
-    // Portfolio-Gesamtrendite (gewichtet nach ETF/Cash-Anteil am Periodenstart)
-    const savingsReturnFactor = 1 + monthlySavingsRate;
-    let portfolioReturn = monthlyEtfReturn;
-    if (totalPortfolioStart > 0) {
-      const etfWeight = totalEtfValueStart / totalPortfolioStart;
-      const cashWeight = 1 - etfWeight;
-      portfolioReturn = etfWeight * monthlyEtfReturn + cashWeight * savingsReturnFactor;
-    }
-    
-    history.push({
-      month: monthIdx,
-      year: yearIdx + 1,
-      phase: isSavingsPhase ? "Anspar" : "Entnahme",
-      savings,
-      etf: etf_value,
-      total,
-      total_real: total / cumulativeInflation,
-      savings_contrib,
-      etf_contrib,
-      savings_interest: savingsInterest,
-      withdrawal: withdrawal_paid,
-      withdrawal_real: withdrawal_paid / cumulativeInflation,
-      withdrawal_net,
-      withdrawal_net_real: withdrawal_net / cumulativeInflation,
-      withdrawal_requested: withdrawal, // Für Shortfall-Analyse (MC)
-      shortfall, // Differenz zwischen angefordert und tatsächlich ausgezahlt (MC)
-      tax_shortfall: taxShortfall, // Steuer konnte nicht vollständig bezahlt werden
-      monthly_payout: monthlyPayout, // Nur reguläre monatliche Entnahme (ohne Sonderausgaben)
-      monthly_payout_real: monthlyPayout / cumulativeInflation,
-      tax_paid,
-      vorabpauschale_tax: vorabpauschaleTaxPaidThisMonth, // Gezahlte Vorabpauschale-Steuer (im Januar)
-      payout_value: effectivePayout,
-      payout_percent_pa: isSavingsPhase ? null : payoutPercentPa,
-      return_gain: etfGrowth + savingsInterest,
-      etfReturn: monthlyEtfReturn, // Nur ETF-Rendite (für MC)
-      portfolioReturn, // Portfolio-Gesamtrendite inkl. Cash (für SoRR-Analyse)
-      cumulative_inflation: cumulativeInflation,
-      capital_preservation_active: capitalPreservationActiveThisMonth || false,
-      yearly_used_freibetrag: yearlyUsedFreibetrag, // Im laufenden Steuerjahr genutzter Freibetrag
-      loss_pot: lossPot, // Allgemeiner Verlusttopf am Monatsende
-    });
-  }
-
-  // ============ NACHBEARBEITUNG: Pending Vorabpauschale des letzten Jahres ============
-  // Falls die Simulation im Dezember endet, ist noch eine Vorabpauschale vorgemerkt,
-  // die im Januar des Folgejahres fällig wäre. Diese muss noch berücksichtigt werden.
-  if (pendingVorabpauschaleAmount > 0 && history.length > 0) {
-    // Reihenfolge: Verlusttopf → Sparerpauschbetrag → Rest versteuern
-    // 1. Verlusttopf nutzen
-    const usedLossPot = Math.min(pendingVorabpauschaleAmount, lossPot);
-    lossPot -= usedLossPot;
-    const afterLossPot = pendingVorabpauschaleAmount - usedLossPot;
-    
-    // 2. Sparerpauschbetrag nutzen (neues Jahr, voll verfügbar)
-    const finalRemainingFreibetrag = sparerpauschbetrag;
-    const usedFreibetrag = Math.min(afterLossPot, finalRemainingFreibetrag);
-    
-    // 3. Rest versteuern
-    const finalTaxableAfterAll = Math.max(0, afterLossPot - usedFreibetrag);
-    const finalVorabpauschaleTax = finalTaxableAfterAll * taxRate;
-    
-    const coverResult = coverTaxWithSavingsAndEtf(
-      finalVorabpauschaleTax,
-      savings,
-      etfLots,
-      currentEtfPrice,
-      usedFreibetrag, // Freibetrag wurde durch VAP teilweise verbraucht
-      sparerpauschbetrag,
-      taxRate,
-      lossPot,
-      !use_lifo,
-      teilfreistellung
-    );
-    savings = coverResult.savings;
-    lossPot = coverResult.lossPot;
-    const totalEtfShares = etfLots.reduce((acc, l) => acc + l.amount, 0);
-    const updatedEtfValue = totalEtfShares * currentEtfPrice;
-    
-    // Letzten History-Eintrag aktualisieren (als "fällig im Folgejahr" markiert)
-    const lastEntry = history[history.length - 1];
-    lastEntry.savings = savings;
-    lastEntry.etf = updatedEtfValue; // ETF-Bestand wurde evtl. verkauft
-    lastEntry.total = lastEntry.savings + lastEntry.etf;
-    lastEntry.total_real = lastEntry.total / lastEntry.cumulative_inflation;
-    lastEntry.tax_paid += coverResult.totalTaxRecorded;
-    // Vorabpauschale-Steuer auch in vorabpauschale_tax addieren (für UI-Summe/CSV)
-    lastEntry.vorabpauschale_tax = (lastEntry.vorabpauschale_tax || 0) + coverResult.taxPaidOriginal;
-    // Speichere die pending Vorabpauschale-Steuer als Meta-Info
-    lastEntry.pending_vorabpauschale_tax = coverResult.taxPaidOriginal;
-    lastEntry.loss_pot = lossPot;
-    if (coverResult.shortfall > 0.01) {
-      lastEntry.tax_shortfall = (lastEntry.tax_shortfall || 0) + coverResult.shortfall;
-    }
-    
-    // Auch savings-Variable aktualisieren (für konsistente Rückgabe)
-    if (savings < 0) savings = 0;
-  }
-
-  // Kapitalerhalt-Statistiken am Ende anhängen (als Meta-Info)
-  if (history.length > 0) {
-    history.capitalPreservationMonths = capitalPreservationMonths;
-    history.capitalPreservationEnabled = capital_preservation_enabled;
-  }
-
-  return history;
-}
 
 function formatCurrency(val) {
   return nf0.format(Math.round(val)).replace(/\u00a0/, " ") + " €";
@@ -2876,6 +1890,96 @@ let lastMcResults = null;
 let mcUseLogScale = true; // Standard: logarithmische Skala
 let mcUseRealValues = false; // Standard: nominale Werte im Graph
 
+function createEtaTracker(options) {
+  const minSamples = options && typeof options.minSamples === "number" ? options.minSamples : 3;
+  const minElapsedMs = options && typeof options.minElapsedMs === "number" ? options.minElapsedMs : 1500;
+  const alpha = options && typeof options.alpha === "number" ? options.alpha : 0.3;
+  let totalWork = 0;
+  let startTime = 0;
+  let lastUpdateTime = 0;
+  let lastCompleted = 0;
+  let smoothedThroughput = 0;
+  let sampleCount = 0;
+  let stopped = false;
+
+  function now() {
+    return Date.now();
+  }
+
+  function formatEta(etaSeconds) {
+    if (!isFinite(etaSeconds) || etaSeconds < 0) return "";
+    if (etaSeconds < 1) return "< 1 s";
+    if (etaSeconds < 60) {
+      return String(Math.round(etaSeconds)) + " s";
+    }
+    const minutes = Math.floor(etaSeconds / 60);
+    const seconds = Math.round(etaSeconds % 60);
+    if (minutes < 60) {
+      const mm = String(minutes);
+      const ss = String(seconds).padStart(2, "0");
+      return mm + ":" + ss + " min";
+    }
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    const mm = String(remMinutes).padStart(2, "0");
+    return String(hours) + ":" + mm + " h";
+  }
+
+  return {
+    start(total) {
+      totalWork = typeof total === "number" ? total : 0;
+      startTime = now();
+      lastUpdateTime = startTime;
+      lastCompleted = 0;
+      smoothedThroughput = 0;
+      sampleCount = 0;
+      stopped = false;
+    },
+    update(completed) {
+      if (stopped) return;
+      const t = now();
+      if (!startTime) {
+        startTime = t;
+        lastUpdateTime = t;
+      }
+      const deltaCompleted = completed - lastCompleted;
+      const deltaTime = t - lastUpdateTime;
+      if (deltaCompleted <= 0 || deltaTime < 200) {
+        lastCompleted = completed;
+        lastUpdateTime = t;
+        return;
+      }
+      const instantThroughput = deltaCompleted / (deltaTime / 1000);
+      if (smoothedThroughput === 0) {
+        smoothedThroughput = instantThroughput;
+      } else {
+        smoothedThroughput = alpha * instantThroughput + (1 - alpha) * smoothedThroughput;
+      }
+      lastCompleted = completed;
+      lastUpdateTime = t;
+      sampleCount += 1;
+    },
+    getEta() {
+      if (stopped || !startTime || totalWork <= 0 || smoothedThroughput <= 0) {
+        return { seconds: null, formatted: "" };
+      }
+      const elapsed = now() - startTime;
+      if (sampleCount < minSamples || elapsed < minElapsedMs) {
+        return { seconds: null, formatted: "" };
+      }
+      const remaining = Math.max(0, totalWork - lastCompleted);
+      if (remaining <= 0) {
+        return { seconds: 0, formatted: "< 1 s" };
+      }
+      const etaSeconds = remaining / smoothedThroughput;
+      return { seconds: etaSeconds, formatted: formatEta(etaSeconds) };
+    },
+    stop() {
+      stopped = true;
+    }
+  };
+}
+
 /**
  * Wrapper for stochastic Monte-Carlo simulation.
  * Calls the unified simulate() function with volatility parameter.
@@ -2887,26 +1991,7 @@ function simulateStochastic(params, annualVolatility) {
   return simulate(params, annualVolatility);
 }
 
-// Berechnet Perzentil aus sortiertem Array
-function percentile(sortedArr, p) {
-  if (sortedArr.length === 0) return 0;
-  const idx = (p / 100) * (sortedArr.length - 1);
-  const lower = Math.floor(idx);
-  const upper = Math.ceil(idx);
-  if (lower === upper) return sortedArr[lower];
-  return sortedArr[lower] * (upper - idx) + sortedArr[upper] * (idx - lower);
-}
-
-// Seeded PRNG (Mulberry32) für reproduzierbare Ergebnisse
-function createSeededRandom(seed) {
-  let s = seed;
-  return function() {
-    s |= 0; s = s + 0x6D2B79F5 | 0;
-    let t = Math.imul(s ^ s >>> 15, 1 | s);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
+// HINWEIS: percentile und createSeededRandom sind in simulation-core.js definiert
 
 // Prüft Parameter auf historisch unrealistische Kombinationen
 // Gibt Array von {text, severity} zurück ('warning' = gelb, 'critical' = rot)
@@ -3205,355 +2290,7 @@ function analyzeSequenceOfReturnsRisk(allHistories, params) {
   };
 }
 
-function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
-  const numMonths = allHistories[0]?.length || 0;
-  const numSims = allHistories.length;
-  const savingsMonths = params.savings_years * MONTHS_PER_YEAR;
-  
-  // Konfigurierbare Schwellen (mit Defaults)
-  const SUCCESS_THRESHOLD_REAL = mcOptions.successThreshold ?? 100; // € in heutiger Kaufkraft
-  const RUIN_THRESHOLD_PERCENT = (mcOptions.ruinThresholdPercent ?? 10) / 100; // % des Rentenbeginn-Vermögens
-  
-  // Sammle Endvermögen
-  const finalTotals = allHistories.map(h => h[h.length - 1]?.total || 0).sort((a, b) => a - b);
-  const finalTotalsReal = allHistories.map(h => h[h.length - 1]?.total_real || 0).sort((a, b) => a - b);
-  // Sammle Verlusttöpfe & genutzten Freibetrag am Ende
-  const finalLossPot = allHistories.map(h => h[h.length - 1]?.loss_pot || 0).sort((a, b) => a - b);
-  const finalYearlyFreibetrag = allHistories.map(h => h[h.length - 1]?.yearly_used_freibetrag || 0).sort((a, b) => a - b);
-  
-  // Sequence-of-Returns Risk Analyse
-  const sorr = analyzeSequenceOfReturnsRisk(allHistories, params);
-  
-  // Vermögen bei Rentenbeginn (Index = savingsMonths - 1, da 0-basiert)
-  const retirementIdx = Math.min(savingsMonths - 1, numMonths - 1);
-  const retirementTotals = allHistories.map(h => h[retirementIdx]?.total || 0).sort((a, b) => a - b);
-  const retirementMedian = percentile(retirementTotals, 50);
-  
-  // Erfolgsrate: Vermögen > Schwelle (real) am Ende UND keine Shortfalls während Entnahmephase
-  // Shortfall = angeforderte Entnahme konnte nicht vollständig bedient werden
-  
-  let successCountStrict = 0;
-  let successCountNominal = 0;
-  let totalShortfallCount = 0; // Simulationen mit mindestens einem Shortfall
-  let ansparShortfallCount = 0; // Shortfalls NUR in Ansparphase
-  let entnahmeShortfallCount = 0; // Shortfalls NUR in Entnahmephase
-  
-  // Sinnvolle Shortfall-Toleranz: 1% der angeforderten Entnahme oder 50€, je nachdem was größer ist
-  const SHORTFALL_TOLERANCE_PERCENT = 0.01;
-  const SHORTFALL_TOLERANCE_ABS = 50;
-  
-  for (const history of allHistories) {
-    const lastRow = history[history.length - 1];
-    const endWealth = lastRow?.total || 0;
-    const endInflation = lastRow?.cumulative_inflation || 1;
-    // Schwelle ist REAL: 100€ in heutiger Kaufkraft = 100 * Inflation in nominalen €
-    const successThresholdNominal = SUCCESS_THRESHOLD_REAL * endInflation;
-    const hasPositiveEnd = endWealth > successThresholdNominal;
-    
-    // Prüfe auf Shortfalls GETRENNT nach Phase
-    let hasAnsparShortfall = false;
-    let hasEntnahmeShortfall = false;
-    
-    // Ansparphase (0 bis savingsMonths-1)
-    for (let m = 0; m < savingsMonths && m < numMonths; m++) {
-      if ((history[m]?.shortfall || 0) > SHORTFALL_TOLERANCE_ABS || 
-          (history[m]?.tax_shortfall || 0) > SHORTFALL_TOLERANCE_ABS) {
-        hasAnsparShortfall = true;
-        break;
-      }
-    }
-    
-    // Entnahmephase (ab savingsMonths): Nutze relative Toleranz
-    for (let m = savingsMonths; m < numMonths; m++) {
-      const requested = history[m]?.withdrawal_requested || 0;
-      const shortfall = history[m]?.shortfall || 0;
-      const taxShortfall = history[m]?.tax_shortfall || 0;
-      const tolerance = Math.max(SHORTFALL_TOLERANCE_ABS, requested * SHORTFALL_TOLERANCE_PERCENT);
-      
-      if (shortfall > tolerance || taxShortfall > tolerance) {
-        hasEntnahmeShortfall = true;
-        break;
-      }
-    }
-    
-    const hasShortfall = hasAnsparShortfall || hasEntnahmeShortfall;
-    
-    if (hasPositiveEnd) successCountNominal++;
-    // Strenge Erfolgsrate: Nur Entnahme-Shortfalls zählen (Anspar-Shortfalls sind weniger kritisch)
-    if (hasPositiveEnd && !hasEntnahmeShortfall) successCountStrict++;
-    if (hasShortfall) totalShortfallCount++;
-    if (hasAnsparShortfall) ansparShortfallCount++;
-    if (hasEntnahmeShortfall) entnahmeShortfallCount++;
-  }
-  
-  // Strenge Erfolgsrate: Keine Shortfalls UND positives Endvermögen (real)
-  const successRate = (successCountStrict / numSims) * 100;
-  // Nominale Erfolgsrate (Endvermögen > 100€ real, wie oben)
-  const successRateNominal = (successCountNominal / numSims) * 100;
-  // Shortfall-Quote: Anteil der Simulationen mit mindestens einem Shortfall
-  const shortfallRate = (totalShortfallCount / numSims) * 100;
-  
-  // Kapitalerhalt (nominal): Endvermögen >= Vermögen bei Rentenbeginn
-  let capitalPreservationCount = 0;
-  for (let i = 0; i < numSims; i++) {
-    const retirementWealth = allHistories[i][retirementIdx]?.total || 0;
-    const endWealth = allHistories[i][numMonths - 1]?.total || 0;
-    if (endWealth >= retirementWealth) capitalPreservationCount++;
-  }
-  const capitalPreservationRate = (capitalPreservationCount / numSims) * 100;
-  
-  // Kapitalerhalt (real/inflationsbereinigt): Kaufkraft erhalten
-  // Vergleicht reale Werte: Endvermögen_real >= Rentenbeginn_real
-  let capitalPreservationRealCount = 0;
-  for (let i = 0; i < numSims; i++) {
-    const retirementWealthReal = allHistories[i][retirementIdx]?.total_real || 0;
-    const endWealthReal = allHistories[i][numMonths - 1]?.total_real || 0;
-    if (endWealthReal >= retirementWealthReal) capitalPreservationRealCount++;
-  }
-  const capitalPreservationRateReal = (capitalPreservationRealCount / numSims) * 100;
-  
-  // Pleite-Risiko: Vermögen fällt NUR IN DER ENTNAHMEPHASE unter X% des 
-  // Rentenbeginn-Vermögens ODER signifikanter Shortfall tritt in Entnahmephase auf.
-  // Die Ansparphase wird ignoriert, da dort niedrige Vermögen normal sind.
-  // RUIN_THRESHOLD_PERCENT wird oben aus mcOptions gelesen (Default: 10%)
-  // GEGLÄTTET: Shortfall muss signifikant sein (analog zu Shortfall-Toleranz)
-  let ruinCount = 0;
-  for (const history of allHistories) {
-    let isRuin = false;
-    // Rentenbeginn-Vermögen als Referenz für diese Simulation
-    const retirementWealthSim = history[retirementIdx]?.total || 0;
-    const ruinThresholdAbsolute = retirementWealthSim * RUIN_THRESHOLD_PERCENT;
-    
-    // NUR Entnahmephase prüfen (ab savingsMonths)
-    for (let m = savingsMonths; m < numMonths; m++) {
-      // GEGLÄTTET: Nutze gleiche Toleranz wie bei Shortfall-Analyse
-      // Ruin nur bei SIGNIFIKANTEM Shortfall (max(50€, 1% der angeforderten Entnahme))
-      const requested = history[m]?.withdrawal_requested || 0;
-      const shortfallTolerance = Math.max(SHORTFALL_TOLERANCE_ABS, requested * SHORTFALL_TOLERANCE_PERCENT);
-      const shortfall = history[m]?.shortfall || 0;
-      const taxShortfall = history[m]?.tax_shortfall || 0;
-      const significantShortfall = shortfall > shortfallTolerance || taxShortfall > shortfallTolerance;
-      
-      // Nominal prüfen, da Referenz auch nominal ist
-      if ((history[m]?.total || 0) < ruinThresholdAbsolute || significantShortfall) {
-        isRuin = true;
-        break;
-      }
-    }
-    if (isRuin) ruinCount++;
-  }
-  const ruinProbability = (ruinCount / numSims) * 100;
-  
-  // Durchschnittliches Endvermögen
-  const meanEnd = finalTotals.reduce((a, b) => a + b, 0) / numSims;
-  
-  // Durchschnittliche monatliche Rente und Gesamtentnahmen berechnen
-  // Brutto = withdrawal (tatsächlich aus Vermögen entnommener Betrag)
-  // Netto  = withdrawal_net (tatsächlich beim Nutzer ankommender Betrag nach Steuern)
-  const avgMonthlyWithdrawalsGross = [];
-  const avgMonthlyWithdrawalsGrossReal = [];
-  const avgMonthlyWithdrawalsNet = [];
-  const avgMonthlyWithdrawalsNetReal = [];
-  const totalWithdrawalsGross = [];
-  const totalWithdrawalsGrossReal = [];
-  const totalWithdrawalsNet = [];
-  const totalWithdrawalsNetReal = [];
-  
-  for (const history of allHistories) {
-    // Filter auf Entnahmephase mit tatsächlicher Auszahlung > 0 (Brutto oder Netto)
-    const entnahmeRows = history.filter(r => r.phase === "Entnahme" && (((r.withdrawal || 0) > 0) || ((r.withdrawal_net || 0) > 0)));
-    if (!entnahmeRows.length) continue;
-
-    // Brutto: tatsächliche Entnahme aus Vermögen (withdrawal)
-    const avgWithdrawalGross = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal || 0), 0) / entnahmeRows.length;
-    const avgWithdrawalGrossReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_real || 0), 0) / entnahmeRows.length;
-    avgMonthlyWithdrawalsGross.push(avgWithdrawalGross);
-    avgMonthlyWithdrawalsGrossReal.push(avgWithdrawalGrossReal);
-    
-    const totalGross = history.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
-    const totalGrossReal = history.reduce((sum, r) => sum + (r.withdrawal_real || r.withdrawal || 0), 0);
-    totalWithdrawalsGross.push(totalGross);
-    totalWithdrawalsGrossReal.push(totalGrossReal);
-
-    // Netto: tatsächlich ankommende Rente (withdrawal_net)
-    const avgWithdrawalNet = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_net || 0), 0) / entnahmeRows.length;
-    const avgWithdrawalNetReal = entnahmeRows.reduce((sum, r) => sum + (r.withdrawal_net_real || 0), 0) / entnahmeRows.length;
-    avgMonthlyWithdrawalsNet.push(avgWithdrawalNet);
-    avgMonthlyWithdrawalsNetReal.push(avgWithdrawalNetReal);
-
-    const totalNet = history.reduce((sum, r) => sum + (r.withdrawal_net || 0), 0);
-    const totalNetReal = history.reduce((sum, r) => sum + (r.withdrawal_net_real || r.withdrawal_net || 0), 0);
-    totalWithdrawalsNet.push(totalNet);
-    totalWithdrawalsNetReal.push(totalNetReal);
-  }
-  
-  avgMonthlyWithdrawalsGross.sort((a, b) => a - b);
-  avgMonthlyWithdrawalsGrossReal.sort((a, b) => a - b);
-  avgMonthlyWithdrawalsNet.sort((a, b) => a - b);
-  avgMonthlyWithdrawalsNetReal.sort((a, b) => a - b);
-  totalWithdrawalsGross.sort((a, b) => a - b);
-  totalWithdrawalsGrossReal.sort((a, b) => a - b);
-  totalWithdrawalsNet.sort((a, b) => a - b);
-  totalWithdrawalsNetReal.sort((a, b) => a - b);
-  
-  const medianAvgMonthlyWithdrawalGross = avgMonthlyWithdrawalsGross.length > 0 ? percentile(avgMonthlyWithdrawalsGross, 50) : 0;
-  const medianAvgMonthlyWithdrawalGrossReal = avgMonthlyWithdrawalsGrossReal.length > 0 ? percentile(avgMonthlyWithdrawalsGrossReal, 50) : 0;
-  const medianAvgMonthlyWithdrawalNet = avgMonthlyWithdrawalsNet.length > 0 ? percentile(avgMonthlyWithdrawalsNet, 50) : 0;
-  const medianAvgMonthlyWithdrawalNetReal = avgMonthlyWithdrawalsNetReal.length > 0 ? percentile(avgMonthlyWithdrawalsNetReal, 50) : 0;
-  const medianTotalWithdrawalsGross = totalWithdrawalsGross.length > 0 ? percentile(totalWithdrawalsGross, 50) : 0;
-  const medianTotalWithdrawalsGrossReal = totalWithdrawalsGrossReal.length > 0 ? percentile(totalWithdrawalsGrossReal, 50) : 0;
-  const medianTotalWithdrawalsNet = totalWithdrawalsNet.length > 0 ? percentile(totalWithdrawalsNet, 50) : 0;
-  const medianTotalWithdrawalsNetReal = totalWithdrawalsNetReal.length > 0 ? percentile(totalWithdrawalsNetReal, 50) : 0;
-  
-  // Kaufkraftverlust berechnen (basierend auf Inflationsrate und Gesamtlaufzeit)
-  const totalMonths = numMonths;
-  const inflationRatePa = params.inflation_rate_pa || 2;
-  const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, totalMonths / MONTHS_PER_YEAR);
-  const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
-  
-  // KORRIGIERT: Reale Rendite p.a. mit Modified Dietz Methode
-  // Berücksichtigt laufende Einzahlungen zeitgewichtet, nicht nur Startvermögen
-  // KORRIGIERT: Nutze cost_basis für Start-ETF wenn angegeben (konsistent mit renderStats)
-  const effectiveStartEtfCost = (params.start_etf_cost_basis > 0) 
-    ? params.start_etf_cost_basis 
-    : (params.start_etf || 0);
-  const startTotal = params.start_savings + effectiveStartEtfCost;
-  const savingsYearsNum = params.savings_years || 1;
-  const monthlySavings = params.monthly_savings || 0;
-  const monthlyEtf = params.monthly_etf || 0;
-  const monthlyContrib = monthlySavings + monthlyEtf;
-  
-  // Modified Dietz: R = (V_end - V_start - CF_total) / (V_start + CF_weighted)
-  // CF_weighted = Sum(CF_i * (T - t_i) / T), wobei T = Gesamtmonate, t_i = Monat der Einzahlung
-  let realReturnPa = 0;
-  if (savingsMonths > 0) {
-    // Gesamte Cashflows (vereinfacht: gleiche monatliche Einzahlung)
-    const totalContributions = monthlyContrib * savingsMonths;
-    
-    // Zeitgewichtete Cashflows: Jede Einzahlung am Anfang von Monat m hat Gewicht (savingsMonths - m) / savingsMonths
-    // Für gleichmäßige Einzahlungen: Summe = monthlyContrib * Sum((T-m)/T) für m=0..T-1
-    // = monthlyContrib * (T + T-1 + ... + 1) / T = monthlyContrib * (T+1)/2
-    // Aber bei Einzahlung am Monatsende: Gewicht = (T - m - 1) / T
-    // Approximation: Durchschnittliches Gewicht ≈ 0.5 (Mitte der Periode)
-    const weightedContributions = totalContributions * 0.5;
-    
-    // Modified Dietz Return (nicht annualisiert)
-    const denominator = startTotal + weightedContributions;
-    if (denominator > 0 && retirementMedian > 0) {
-      const modifiedDietzReturn = (retirementMedian - startTotal - totalContributions) / denominator;
-      
-      // Annualisieren: (1 + R_total)^(1/years) - 1
-      // Aber Modified Dietz gibt bereits eine "return on invested capital" Kennzahl
-      // Für konsistente Annualisierung: Geometrische Approximation
-      const totalReturn = 1 + modifiedDietzReturn;
-      const nominalCagrMD = totalReturn > 0 
-        ? Math.pow(totalReturn, 1 / savingsYearsNum) - 1 
-        : 0;
-      
-      // Reale Rendite = (1 + nominal) / (1 + inflation) - 1
-      realReturnPa = ((1 + nominalCagrMD) / (1 + inflationRatePa / 100) - 1) * 100;
-    }
-  }
-  
-  // Input-basierte theoretische Rendite zum Vergleich
-  const theoreticalNominalPa = (params.etf_rate_pa || 6) - (params.etf_ter_pa || 0);
-  const theoreticalRealPa = ((1 + theoreticalNominalPa / 100) / (1 + inflationRatePa / 100) - 1) * 100;
-  
-  // Perzentile pro Monat berechnen (nominal und real)
-  const percentiles = {
-    p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
-  };
-  const percentilesReal = {
-    p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: []
-  };
-  
-  for (let month = 0; month < numMonths; month++) {
-    const monthTotals = allHistories.map(h => h[month]?.total || 0).sort((a, b) => a - b);
-    const monthTotalsReal = allHistories.map(h => h[month]?.total_real || 0).sort((a, b) => a - b);
-    
-    percentiles.p5.push(percentile(monthTotals, 5));
-    percentiles.p10.push(percentile(monthTotals, 10));
-    percentiles.p25.push(percentile(monthTotals, 25));
-    percentiles.p50.push(percentile(monthTotals, 50));
-    percentiles.p75.push(percentile(monthTotals, 75));
-    percentiles.p90.push(percentile(monthTotals, 90));
-    percentiles.p95.push(percentile(monthTotals, 95));
-    
-    percentilesReal.p5.push(percentile(monthTotalsReal, 5));
-    percentilesReal.p10.push(percentile(monthTotalsReal, 10));
-    percentilesReal.p25.push(percentile(monthTotalsReal, 25));
-    percentilesReal.p50.push(percentile(monthTotalsReal, 50));
-    percentilesReal.p75.push(percentile(monthTotalsReal, 75));
-    percentilesReal.p90.push(percentile(monthTotalsReal, 90));
-    percentilesReal.p95.push(percentile(monthTotalsReal, 95));
-  }
-  
-  // Jahre-Array für X-Achse
-  const months = allHistories[0]?.map(h => h.month) || [];
-  
-  return {
-    iterations: numSims,
-    successRate, // Strenge Rate: Keine Entnahme-Shortfalls UND positives Endvermögen
-    successRateNominal, // Nur positives Endvermögen (alte Definition)
-    shortfallRate, // Anteil mit mindestens einem Shortfall (gesamt)
-    ansparShortfallRate: (ansparShortfallCount / numSims) * 100,
-    entnahmeShortfallRate: (entnahmeShortfallCount / numSims) * 100,
-    finalTotals,
-    finalTotalsReal,
-    percentiles,
-    percentilesReal,
-    months,
-    medianEnd: percentile(finalTotals, 50),
-    p10End: percentile(finalTotals, 10),
-    p90End: percentile(finalTotals, 90),
-    p5End: percentile(finalTotals, 5),
-    p25End: percentile(finalTotals, 25),
-    p75End: percentile(finalTotals, 75),
-    p95End: percentile(finalTotals, 95),
-    savingsYears: params.savings_years,
-    // Zusätzliche Metriken
-    retirementMedian,
-    capitalPreservationRate,
-    capitalPreservationRateReal, // Inflationsbereinigte Kapitalerhalt-Rate
-    ruinProbability,
-    meanEnd,
-    // Inflationsbereinigte Werte (real)
-    medianEndReal: percentile(finalTotalsReal, 50),
-    p10EndReal: percentile(finalTotalsReal, 10),
-    p90EndReal: percentile(finalTotalsReal, 90),
-    p5EndReal: percentile(finalTotalsReal, 5),
-    p25EndReal: percentile(finalTotalsReal, 25),
-    p75EndReal: percentile(finalTotalsReal, 75),
-    p95EndReal: percentile(finalTotalsReal, 95),
-    meanEndReal: finalTotalsReal.reduce((a, b) => a + b, 0) / numSims,
-    retirementMedianReal: percentile(
-      allHistories.map(h => h[retirementIdx]?.total_real || 0).sort((a, b) => a - b), 
-      50
-    ),
-    // Entnahme-Statistiken
-    // Rückwärtskompatible Felder (Netto-Werte)
-    medianAvgMonthlyWithdrawal: medianAvgMonthlyWithdrawalNet,
-    medianAvgMonthlyWithdrawalReal: medianAvgMonthlyWithdrawalNetReal,
-    medianTotalWithdrawals: medianTotalWithdrawalsNet,
-    medianTotalWithdrawalsReal: medianTotalWithdrawalsNetReal,
-    // Explizite Trennung Netto / Brutto
-    medianAvgMonthlyWithdrawalNet,
-    medianAvgMonthlyWithdrawalNetReal,
-    medianTotalWithdrawalsNet,
-    medianTotalWithdrawalsNetReal,
-    medianAvgMonthlyWithdrawalGross,
-    medianAvgMonthlyWithdrawalGrossReal,
-    medianTotalWithdrawalsGross,
-    medianTotalWithdrawalsGrossReal,
-    purchasingPowerLoss,
-    realReturnPa,
-    // Verlusttopf & Freibetrag (Endstände, Median über alle Simulationen)
-    medianFinalLossPot: percentile(finalLossPot, 50),
-    medianFinalYearlyFreibetrag: percentile(finalYearlyFreibetrag, 50),
-    // Sequence-of-Returns Risk
-    sorr,
-  };
-}
+// HINWEIS: analyzeMonteCarloResults ist in simulation-core.js definiert
 
 function renderMonteCarloStats(results) {
   const successEl = document.getElementById("mc-success-rate");
@@ -3718,6 +2455,32 @@ function renderMonteCarloStats(results) {
     preserveEl.classList.add("stat-value--success");
   } else if (results.capitalPreservationRate >= 25) {
     preserveEl.classList.add("stat-value--warning");
+  }
+
+  // Notgroschen-Kennzahlen
+  const emergencyProbEl = document.getElementById("mc-emergency-fill-prob");
+  const emergencyYearsEl = document.getElementById("mc-emergency-fill-years");
+  const emergencyFillProb = results.emergencyFillProbability ?? 0;
+  const emergencyMedianYears = results.emergencyMedianFillYears;
+
+  if (emergencyProbEl) {
+    emergencyProbEl.textContent = `${emergencyFillProb.toFixed(1)}%`;
+    emergencyProbEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+    if (emergencyFillProb >= 90) {
+      emergencyProbEl.classList.add("stat-value--success");
+    } else if (emergencyFillProb >= 60) {
+      emergencyProbEl.classList.add("stat-value--warning");
+    } else {
+      emergencyProbEl.classList.add("stat-value--danger");
+    }
+  }
+
+  if (emergencyYearsEl) {
+    if (emergencyMedianYears == null || !Number.isFinite(emergencyMedianYears)) {
+      emergencyYearsEl.textContent = emergencyFillProb === 0 ? "nie" : "–";
+    } else {
+      emergencyYearsEl.textContent = `${nf1.format(emergencyMedianYears)} Jahre`;
+    }
   }
   
   // Farbige Erfolgsrate (für neue Highlight-Karte)
@@ -4110,57 +2873,414 @@ function renderMonteCarloGraph(results) {
     ctx.textBaseline = "middle";
     ctx.fillText("Entnahme →", sx - 6, padY + 20);
   }
-  
   mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
 }
 
-// Monte-Carlo Button Event Handler
+// ============ MONTE-CARLO WEB WORKER (POOL) ============
+
+let mcWorkerRunning = false;
+let mcWorkerPool = [];
+
+// Pool-Konfiguration
+const MC_POOL_CONFIG = {
+  maxWorkers: Math.min(navigator.hardwareConcurrency || 4, 8),
+  minIterationsPerWorker: 100,
+};
+
+/**
+ * Berechnet die optimale Worker-Anzahl.
+ * HINWEIS: Immer Pool-Modus für konsistentes deterministisches Seeding.
+ */
+function getOptimalWorkerCount(iterations) {
+  const maxByIterations = Math.floor(iterations / MC_POOL_CONFIG.minIterationsPerWorker);
+  return Math.max(1, Math.min(MC_POOL_CONFIG.maxWorkers, maxByIterations));
+}
+
+function initMcWorkerPool(count) {
+  terminateMcWorkerPool();
+  mcWorkerPool = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      mcWorkerPool.push(new Worker('mc-worker.js'));
+    }
+    return true;
+  } catch (err) {
+    console.warn('MC-Worker-Pool konnte nicht initialisiert werden:', err);
+    terminateMcWorkerPool();
+    return false;
+  }
+}
+
+function terminateMcWorkerPool() {
+  for (const worker of mcWorkerPool) worker.terminate();
+  mcWorkerPool = [];
+}
+
+function aggregateMcResults(allRawData, allSamplePaths, params, mcOptions, volatility) {
+  const numSims = allRawData.reduce((sum, d) => sum + d.finalTotals.length, 0);
+  const numMonths = (params.savings_years + params.withdrawal_years) * 12;
+  
+  const finalTotals = allRawData.flatMap(d => d.finalTotals).sort((a, b) => a - b);
+  const finalTotalsReal = allRawData.flatMap(d => d.finalTotalsReal).sort((a, b) => a - b);
+  const finalLossPot = allRawData.flatMap(d => d.finalLossPot).sort((a, b) => a - b);
+  const finalYearlyFreibetrag = allRawData.flatMap(d => d.finalYearlyFreibetrag).sort((a, b) => a - b);
+  const retirementTotals = allRawData.flatMap(d => d.retirementTotals).sort((a, b) => a - b);
+  const retirementTotalsReal = allRawData.flatMap(d => d.retirementTotalsReal).sort((a, b) => a - b);
+  
+  const allSimResults = allRawData.flatMap(d => d.simResults);
+  let successCountStrict = 0, successCountNominal = 0;
+  let totalShortfallCount = 0, ansparShortfallCount = 0, entnahmeShortfallCount = 0;
+  let ruinCount = 0, capitalPreservationCount = 0, capitalPreservationRealCount = 0;
+  const fillMonths = [];
+  const avgMonthlyWithdrawalsNet = [], avgMonthlyWithdrawalsNetReal = [];
+  const avgMonthlyWithdrawalsGross = [], avgMonthlyWithdrawalsGrossReal = [];
+  const totalWithdrawalsNet = [], totalWithdrawalsNetReal = [];
+  const totalWithdrawalsGross = [], totalWithdrawalsGrossReal = [];
+  
+  for (const sim of allSimResults) {
+    if (sim.hasPositiveEnd) successCountNominal++;
+    if (sim.hasPositiveEnd && !sim.hasEntnahmeShortfall) successCountStrict++;
+    if (sim.hasAnsparShortfall || sim.hasEntnahmeShortfall) totalShortfallCount++;
+    if (sim.hasAnsparShortfall) ansparShortfallCount++;
+    if (sim.hasEntnahmeShortfall) entnahmeShortfallCount++;
+    if (sim.isRuin) ruinCount++;
+    if (sim.capitalPreserved) capitalPreservationCount++;
+    if (sim.capitalPreservedReal) capitalPreservationRealCount++;
+    if (sim.firstFillMonth !== null) fillMonths.push(sim.firstFillMonth);
+    if (sim.avgWithdrawalNet > 0) {
+      avgMonthlyWithdrawalsNet.push(sim.avgWithdrawalNet);
+      avgMonthlyWithdrawalsNetReal.push(sim.avgWithdrawalNetReal);
+      avgMonthlyWithdrawalsGross.push(sim.avgWithdrawalGross);
+      avgMonthlyWithdrawalsGrossReal.push(sim.avgWithdrawalGrossReal);
+      totalWithdrawalsNet.push(sim.totalWithdrawalNet);
+      totalWithdrawalsNetReal.push(sim.totalWithdrawalNetReal);
+      totalWithdrawalsGross.push(sim.totalWithdrawalGross);
+      totalWithdrawalsGrossReal.push(sim.totalWithdrawalGrossReal);
+    }
+  }
+  
+  avgMonthlyWithdrawalsNet.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsNetReal.sort((a, b) => a - b);
+  totalWithdrawalsNet.sort((a, b) => a - b);
+  totalWithdrawalsNetReal.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGross.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGrossReal.sort((a, b) => a - b);
+  totalWithdrawalsGross.sort((a, b) => a - b);
+  totalWithdrawalsGrossReal.sort((a, b) => a - b);
+  fillMonths.sort((a, b) => a - b);
+  
+  const allSorrData = allRawData.flatMap(d => d.sorrData);
+  const sorr = aggregateSorrData(allSorrData, params);
+  
+  const percentiles = { p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: [] };
+  const percentilesReal = { p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: [] };
+  const sampleHistories = allSamplePaths.flat().slice(0, 50);
+  
+  // KORRIGIERT: Perzentile aus ALLEN Pfaden berechnen (monthlyTotals), nicht nur Samples
+  // monthlyTotals ist Array of Arrays: [workerData][month][iteration]
+  // Wir müssen alle Worker-Daten pro Monat zusammenführen
+  const hasMonthlyData = allRawData.length > 0 && allRawData[0].monthlyTotals && allRawData[0].monthlyTotals.length > 0;
+  
+  if (hasMonthlyData) {
+    for (let month = 0; month < numMonths; month++) {
+      // Sammle alle Werte für diesen Monat von allen Workern
+      const monthTotals = [];
+      const monthTotalsReal = [];
+      for (const workerData of allRawData) {
+        if (workerData.monthlyTotals[month]) {
+          monthTotals.push(...workerData.monthlyTotals[month]);
+        }
+        if (workerData.monthlyTotalsReal[month]) {
+          monthTotalsReal.push(...workerData.monthlyTotalsReal[month]);
+        }
+      }
+      monthTotals.sort((a, b) => a - b);
+      monthTotalsReal.sort((a, b) => a - b);
+      
+      percentiles.p5.push(percentile(monthTotals, 5));
+      percentiles.p10.push(percentile(monthTotals, 10));
+      percentiles.p25.push(percentile(monthTotals, 25));
+      percentiles.p50.push(percentile(monthTotals, 50));
+      percentiles.p75.push(percentile(monthTotals, 75));
+      percentiles.p90.push(percentile(monthTotals, 90));
+      percentiles.p95.push(percentile(monthTotals, 95));
+      percentilesReal.p5.push(percentile(monthTotalsReal, 5));
+      percentilesReal.p10.push(percentile(monthTotalsReal, 10));
+      percentilesReal.p25.push(percentile(monthTotalsReal, 25));
+      percentilesReal.p50.push(percentile(monthTotalsReal, 50));
+      percentilesReal.p75.push(percentile(monthTotalsReal, 75));
+      percentilesReal.p90.push(percentile(monthTotalsReal, 90));
+      percentilesReal.p95.push(percentile(monthTotalsReal, 95));
+    }
+  } else if (sampleHistories.length > 0) {
+    // Fallback auf Samples wenn keine Per-Monat-Daten vorhanden (Legacy-Kompatibilität)
+    console.warn('Perzentile basieren nur auf Samples - Legacy-Modus');
+    for (let month = 0; month < numMonths; month++) {
+      const monthTotals = sampleHistories.map(h => h[month]?.total || 0).sort((a, b) => a - b);
+      const monthTotalsReal = sampleHistories.map(h => h[month]?.total_real || 0).sort((a, b) => a - b);
+      percentiles.p5.push(percentile(monthTotals, 5));
+      percentiles.p10.push(percentile(monthTotals, 10));
+      percentiles.p25.push(percentile(monthTotals, 25));
+      percentiles.p50.push(percentile(monthTotals, 50));
+      percentiles.p75.push(percentile(monthTotals, 75));
+      percentiles.p90.push(percentile(monthTotals, 90));
+      percentiles.p95.push(percentile(monthTotals, 95));
+      percentilesReal.p5.push(percentile(monthTotalsReal, 5));
+      percentilesReal.p10.push(percentile(monthTotalsReal, 10));
+      percentilesReal.p25.push(percentile(monthTotalsReal, 25));
+      percentilesReal.p50.push(percentile(monthTotalsReal, 50));
+      percentilesReal.p75.push(percentile(monthTotalsReal, 75));
+      percentilesReal.p90.push(percentile(monthTotalsReal, 90));
+      percentilesReal.p95.push(percentile(monthTotalsReal, 95));
+    }
+  }
+  
+  const months = sampleHistories[0]?.map(h => h.month) || Array.from({ length: numMonths }, (_, i) => i + 1);
+  const inflationRatePa = params.inflation_rate_pa || 2;
+  const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, numMonths / 12);
+  const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
+  const emergencyFillProbability = numSims > 0 ? (fillMonths.length / numSims) * 100 : 0;
+  const emergencyNeverFillProbability = Math.max(0, 100 - emergencyFillProbability);
+  const emergencyMedianFillMonths = fillMonths.length ? percentile(fillMonths, 50) : null;
+  const emergencyMedianFillYears = emergencyMedianFillMonths != null ? emergencyMedianFillMonths / 12 : null;
+  
+  return {
+    iterations: numSims,
+    successRate: (successCountStrict / numSims) * 100,
+    successRateNominal: (successCountNominal / numSims) * 100,
+    shortfallRate: (totalShortfallCount / numSims) * 100,
+    ansparShortfallRate: (ansparShortfallCount / numSims) * 100,
+    entnahmeShortfallRate: (entnahmeShortfallCount / numSims) * 100,
+    percentiles, percentilesReal, months,
+    medianEnd: percentile(finalTotals, 50),
+    p10End: percentile(finalTotals, 10),
+    p90End: percentile(finalTotals, 90),
+    p5End: percentile(finalTotals, 5),
+    p25End: percentile(finalTotals, 25),
+    p75End: percentile(finalTotals, 75),
+    p95End: percentile(finalTotals, 95),
+    savingsYears: params.savings_years,
+    retirementMedian: percentile(retirementTotals, 50),
+    capitalPreservationRate: (capitalPreservationCount / numSims) * 100,
+    capitalPreservationRateReal: (capitalPreservationRealCount / numSims) * 100,
+    ruinProbability: (ruinCount / numSims) * 100,
+    meanEnd: finalTotals.reduce((a, b) => a + b, 0) / numSims,
+    medianEndReal: percentile(finalTotalsReal, 50),
+    p10EndReal: percentile(finalTotalsReal, 10),
+    p90EndReal: percentile(finalTotalsReal, 90),
+    p5EndReal: percentile(finalTotalsReal, 5),
+    p25EndReal: percentile(finalTotalsReal, 25),
+    p75EndReal: percentile(finalTotalsReal, 75),
+    p95EndReal: percentile(finalTotalsReal, 95),
+    meanEndReal: finalTotalsReal.reduce((a, b) => a + b, 0) / numSims,
+    retirementMedianReal: percentile(retirementTotalsReal, 50),
+    medianFinalLossPot: percentile(finalLossPot, 50),
+    medianFinalYearlyFreibetrag: percentile(finalYearlyFreibetrag, 50),
+    medianAvgMonthlyWithdrawal: percentile(avgMonthlyWithdrawalsNet, 50),
+    medianAvgMonthlyWithdrawalReal: percentile(avgMonthlyWithdrawalsNetReal, 50),
+    medianTotalWithdrawals: percentile(totalWithdrawalsNet, 50),
+    medianTotalWithdrawalsReal: percentile(totalWithdrawalsNetReal, 50),
+    medianAvgMonthlyWithdrawalNet: percentile(avgMonthlyWithdrawalsNet, 50),
+    medianAvgMonthlyWithdrawalNetReal: percentile(avgMonthlyWithdrawalsNetReal, 50),
+    medianTotalWithdrawalsNet: percentile(totalWithdrawalsNet, 50),
+    medianTotalWithdrawalsNetReal: percentile(totalWithdrawalsNetReal, 50),
+    medianAvgMonthlyWithdrawalGross: percentile(avgMonthlyWithdrawalsGross, 50),
+    medianAvgMonthlyWithdrawalGrossReal: percentile(avgMonthlyWithdrawalsGrossReal, 50),
+    medianTotalWithdrawalsGross: percentile(totalWithdrawalsGross, 50),
+    medianTotalWithdrawalsGrossReal: percentile(totalWithdrawalsGrossReal, 50),
+    purchasingPowerLoss, realReturnPa: 0, sorr, mcOptions, volatility,
+    emergencyFillProbability, emergencyNeverFillProbability, emergencyMedianFillYears,
+    allHistories: sampleHistories,
+    workerCount: mcWorkerPool.length || 1,
+    poolMode: mcWorkerPool.length > 1,
+  };
+}
+
+function aggregateSorrData(allSorrData, params) {
+  const numSims = allSorrData.length;
+  if (params.withdrawal_years === 0 || numSims < 10) {
+    return { sorRiskScore: 0, earlyBadImpact: 0, earlyGoodImpact: 0, correlationEarlyReturns: 0,
+      worstSequenceEnd: 0, bestSequenceEnd: 0, medianSequenceEnd: 0, vulnerabilityWindow: 0 };
+  }
+  allSorrData.sort((a, b) => a.earlyReturn - b.earlyReturn);
+  const quintileSize = Math.floor(numSims / 5);
+  const worstEarlyQuintile = allSorrData.slice(0, quintileSize);
+  const bestEarlyQuintile = allSorrData.slice(-quintileSize);
+  const middleQuintiles = allSorrData.slice(quintileSize * 2, quintileSize * 3);
+  const avgWorst = worstEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / worstEarlyQuintile.length;
+  const avgBest = bestEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / bestEarlyQuintile.length;
+  const avgMiddle = middleQuintiles.reduce((s, d) => s + d.endWealth, 0) / middleQuintiles.length;
+  const meanEarlyReturn = allSorrData.reduce((s, d) => s + d.earlyReturn, 0) / numSims;
+  const meanEndWealth = allSorrData.reduce((s, d) => s + d.endWealth, 0) / numSims;
+  let numerator = 0, denomEarly = 0, denomEnd = 0;
+  for (const d of allSorrData) {
+    const diffEarly = d.earlyReturn - meanEarlyReturn;
+    const diffEnd = d.endWealth - meanEndWealth;
+    numerator += diffEarly * diffEnd;
+    denomEarly += diffEarly * diffEarly;
+    denomEnd += diffEnd * diffEnd;
+  }
+  const correlation = (denomEarly > 0 && denomEnd > 0) ? numerator / Math.sqrt(denomEarly * denomEnd) : 0;
+  const avgStartWealth = allSorrData.reduce((s, d) => s + d.startWealth, 0) / numSims;
+  const sorRiskScore = avgStartWealth > 0 ? ((avgBest - avgWorst) / avgStartWealth) * 100 : 0;
+  const earlyBadImpact = avgMiddle > 0 ? ((avgWorst - avgMiddle) / avgMiddle) * 100 : 0;
+  const earlyGoodImpact = avgMiddle > 0 ? ((avgBest - avgMiddle) / avgMiddle) * 100 : 0;
+  return { sorRiskScore: Math.abs(sorRiskScore), earlyBadImpact, earlyGoodImpact,
+    correlationEarlyReturns: correlation, worstSequenceEnd: avgWorst,
+    bestSequenceEnd: avgBest, medianSequenceEnd: avgMiddle,
+    vulnerabilityWindow: Math.min(5, params.withdrawal_years) };
+}
+
+function runMonteCarloWithPool(params, iterations, volatility, showIndividual, mcOptions) {
+  return new Promise((resolve, reject) => {
+    const workerCount = getOptimalWorkerCount(iterations);
+    const etaMc = createEtaTracker({ minSamples: 3, minElapsedMs: 1500, alpha: 0.3 });
+    // KORRIGIERT: Auch bei workerCount === 1 den Pool-Modus (run-chunk) nutzen,
+    // damit identische Ergebnisse wie bei mehreren Workern (deterministisches Seeding).
+    // Der Legacy-'start'-Modus hat ein anderes Seeding-Schema und liefert abweichende Ergebnisse.
+    
+    if (!initMcWorkerPool(workerCount)) {
+      console.error('Worker-Pool konnte nicht initialisiert werden');
+      reject(new Error('Web Worker werden nicht unterstützt oder konnten nicht gestartet werden.'));
+      return;
+    }
+    
+    mcWorkerRunning = true;
+    etaMc.start(iterations);
+    mcProgressTextEl.textContent = `Starte ${workerCount} Worker...`;
+    
+    const iterationsPerWorker = Math.floor(iterations / workerCount);
+    const remainder = iterations % workerCount;
+    const baseSeed = mcOptions.seed || Date.now();
+    const allRawData = [];
+    const allSamplePaths = [];
+    const workerProgress = new Array(workerCount).fill(0);
+    let completedWorkers = 0;
+    let hasError = false;
+    
+    let currentStartIdx = 0;
+    for (let i = 0; i < workerCount; i++) {
+      const worker = mcWorkerPool[i];
+      const count = iterationsPerWorker + (i < remainder ? 1 : 0);
+      
+      worker.onmessage = function(e) {
+        if (hasError) return;
+        const { type, workerId, completedInChunk, rawData, samplePaths, message } = e.data;
+        switch (type) {
+          case 'chunk-progress':
+            // KORRIGIERT: Tracke fertige Pfade pro Worker, nicht globalen Index
+            workerProgress[workerId] = completedInChunk;
+            const totalProgress = workerProgress.reduce((a, b) => a + b, 0);
+            const pct = Math.round((totalProgress / iterations) * 100);
+            mcProgressEl.value = pct;
+            etaMc.update(totalProgress);
+            const eta = etaMc.getEta();
+            const etaText = eta.formatted ? `, ETA ${eta.formatted}` : "";
+            mcProgressTextEl.textContent = `${totalProgress} / ${iterations} (${pct}%) - ${workerCount} Worker${etaText}`;
+            break;
+          case 'chunk-complete':
+            allRawData.push(rawData);
+            allSamplePaths.push(samplePaths);
+            completedWorkers++;
+            if (completedWorkers === workerCount) {
+              mcWorkerRunning = false;
+              terminateMcWorkerPool();
+              etaMc.update(iterations);
+              etaMc.stop();
+              mcProgressTextEl.textContent = "Aggregiere Ergebnisse...";
+              const results = aggregateMcResults(allRawData, allSamplePaths, params, mcOptions, volatility);
+              results.showIndividual = showIndividual;
+              lastMcResults = results;
+              renderMonteCarloStats(results);
+              renderMonteCarloGraph(results);
+              mcProgressTextEl.textContent = `Fertig! (${workerCount} Worker)`;
+              resolve(results);
+            }
+            break;
+          case 'error':
+            if (!hasError) {
+              hasError = true;
+              mcWorkerRunning = false;
+              terminateMcWorkerPool();
+              etaMc.stop();
+              reject(new Error(message));
+            }
+            break;
+        }
+      };
+      worker.onerror = function(err) {
+        if (!hasError) {
+          hasError = true;
+          mcWorkerRunning = false;
+          terminateMcWorkerPool();
+          etaMc.stop();
+          reject(new Error(err.message || 'Worker-Fehler'));
+        }
+      };
+      worker.postMessage({
+        type: 'run-chunk', params, volatility, mcOptions,
+        startIdx: currentStartIdx, count, totalIterations: iterations,
+        workerId: i, baseSeed
+      });
+      currentStartIdx += count;
+    }
+  });
+}
+
+function runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions) {
+  return runMonteCarloWithPool(params, iterations, volatility, showIndividual, mcOptions);
+}
+
+// Monte-Carlo Button Event Handler (mit Web Worker)
 document.getElementById("btn-monte-carlo")?.addEventListener("click", async () => {
   try {
     messageEl.textContent = "";
-    const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
-    const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
-    const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
-    const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
-    
-    const params = {
-      start_savings: readNumber("start_savings", { min: 0 }),
-      start_etf: readNumber("start_etf", { min: 0 }),
-      start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
-      monthly_savings: readNumber("monthly_savings", { min: 0 }),
-      monthly_etf: readNumber("monthly_etf", { min: 0 }),
-      savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
-      etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
-      etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
-      savings_target: readNumber("savings_target", { min: 0 }),
-      annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
-      savings_years: readNumber("years_save", { min: 1, max: 100 }),
-      withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
-      monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
-      monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
-      withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
-      withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
-      inflation_adjust_withdrawal: inflationAdjust,
-      special_payout_net_savings: readNumber("special_savings", { min: 0 }),
-      special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
-      inflation_adjust_special_savings: inflationAdjustSpecialSavings,
-      special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
-      special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
-      inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
-      inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
-      sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
-      kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
-      fondstyp: document.getElementById("fondstyp")?.value || "aktien",
-      basiszins: readNumber("basiszins", { min: 0, max: 10 }),
-      use_lifo: document.getElementById("use_lifo")?.checked ?? false,
-      rent_mode: mode,
-      rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
-      capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
-      capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
-      capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
-      capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
-      loss_pot: readNumber("loss_pot", { min: 0 }),
-    };
+    const params = typeof readParamsFromForm === 'function' 
+      ? readParamsFromForm() 
+      : (() => {
+          const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+          const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+          const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+          const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+          return {
+            start_savings: readNumber("start_savings", { min: 0 }),
+            start_etf: readNumber("start_etf", { min: 0 }),
+            start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
+            monthly_savings: readNumber("monthly_savings", { min: 0 }),
+            monthly_etf: readNumber("monthly_etf", { min: 0 }),
+            savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+            etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+            etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
+            savings_target: readNumber("savings_target", { min: 0 }),
+            annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+            savings_years: readNumber("years_save", { min: 1, max: 100 }),
+            withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+            monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+            monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+            withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+            withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+            inflation_adjust_withdrawal: inflationAdjust,
+            special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+            special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+            inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+            special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+            special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+            inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
+            inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+            sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+            kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+            fondstyp: document.getElementById("fondstyp")?.value || "aktien",
+            basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+            use_lifo: document.getElementById("use_lifo")?.checked ?? false,
+            rent_mode: mode,
+            rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
+            capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+            capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+            capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+            capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+            loss_pot: readNumber("loss_pot", { min: 0 }),
+          };
+        })();
     
     // Params für Export speichern
     lastParams = params;
@@ -4178,28 +3298,72 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       seed: seed > 0 ? seed : null,
     };
     
+    // Zum MC-Tab wechseln und UI vorbereiten
+    switchToTab("monte-carlo");
+    if (mcEmptyStateEl) mcEmptyStateEl.style.display = "none";
+    if (mcResultsEl) mcResultsEl.style.display = "block";
+    if (mcResultsEl && typeof mcResultsEl.scrollIntoView === "function") {
+      mcResultsEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    
+    // Prüfe auf optimistische Parameter
+    const paramWarnings = checkOptimisticParameters(params, volatility);
+    const warningsEl = document.getElementById("mc-warnings");
+    const warningContainerEl = document.getElementById("mc-warning-optimistic");
+    const warningTextEl = document.getElementById("mc-warning-text");
+    if (warningsEl && warningTextEl && warningContainerEl) {
+      if (paramWarnings.length > 0) {
+        const hasCritical = paramWarnings.some(w => w.severity === "critical");
+        warningContainerEl.classList.toggle("mc-warning--critical", hasCritical);
+        const iconEl = warningContainerEl.querySelector(".mc-warning-icon");
+        if (iconEl) iconEl.textContent = hasCritical ? "🚨" : "⚠️";
+        warningTextEl.innerHTML = paramWarnings.map(w => w.text).join("<br>");
+        warningsEl.style.display = "block";
+      } else {
+        warningsEl.style.display = "none";
+      }
+    }
+    
+    mcProgressEl.value = 0;
+    mcProgressTextEl.textContent = "Starte Worker...";
+    
     // Button deaktivieren während Simulation läuft
     const btn = document.getElementById("btn-monte-carlo");
+    const btnOpt = document.getElementById("btn-optimize");
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Simuliere...";
     }
+    if (btnOpt) btnOpt.disabled = true;
     
-    await runMonteCarloSimulation(params, iterations, volatility, showIndividual, mcOptions);
+    // Worker nutzen
+    await runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions);
     
     if (btn) {
       btn.disabled = false;
       btn.textContent = "Monte-Carlo starten";
     }
     
-    messageEl.textContent = `Monte-Carlo-Simulation abgeschlossen (${iterations} Durchläufe).`;
+    // Optimize-Button aktivieren nach erfolgreicher MC-Simulation
+    if (btnOpt) {
+      btnOpt.disabled = false;
+      btnOpt.title = "Parameter automatisch optimieren";
+    }
+    
+    // Badge im Tab anzeigen
+    if (mcBadgeEl) mcBadgeEl.style.display = "inline";
+    
+    messageEl.textContent = `Monte-Carlo-Simulation abgeschlossen (${iterations} Durchläufe, Worker).`;
   } catch (err) {
     const btn = document.getElementById("btn-monte-carlo");
+    const btnOpt = document.getElementById("btn-optimize");
     if (btn) {
       btn.disabled = false;
       btn.textContent = "Monte-Carlo starten";
     }
+    if (btnOpt) btnOpt.disabled = true;
     messageEl.textContent = err.message || String(err);
+    console.error('MC-Simulation Fehler:', err);
   }
 });
 
@@ -4279,3 +3443,483 @@ function handleMcHover(evt) {
 
 mcGraphCanvas?.addEventListener("mousemove", handleMcHover);
 mcGraphCanvas?.addEventListener("mouseleave", hideTooltip);
+
+// ============ OPTIMIZATION SYSTEM ============
+
+let optimizerWorker = null;
+let lastOptimization = null;
+let isOptimizing = false;
+let optimizerEtaTracker = null;
+
+// UI-Elemente für Optimierung
+const btnOptimize = document.getElementById("btn-optimize");
+const optimizationResultsEl = document.getElementById("optimization-results");
+const optimizationProgressEl = document.getElementById("optimization-progress");
+const optimizationResultPanelEl = document.getElementById("optimization-result-panel");
+const optimizationErrorEl = document.getElementById("optimization-error");
+const optimizeProgressBar = document.getElementById("optimize-progress-bar");
+const optimizeProgressText = document.getElementById("optimize-progress-text");
+
+/**
+ * Liest alle Parameter aus dem Formular.
+ * Gemeinsame Funktion für Standard-, MC- und Optimierungs-Simulation.
+ */
+function readParamsFromForm() {
+  const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+  const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+  const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+  const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+  
+  return {
+    start_savings: readNumber("start_savings", { min: 0 }),
+    start_etf: readNumber("start_etf", { min: 0 }),
+    start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
+    monthly_savings: readNumber("monthly_savings", { min: 0 }),
+    monthly_etf: readNumber("monthly_etf", { min: 0 }),
+    savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+    etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+    etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
+    savings_target: readNumber("savings_target", { min: 0 }),
+    annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+    savings_years: readNumber("years_save", { min: 1, max: 100 }),
+    withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+    monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+    monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+    withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+    withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+    inflation_adjust_withdrawal: inflationAdjust,
+    special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+    special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+    inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+    special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+    special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+    inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
+    inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+    sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+    kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+    fondstyp: document.getElementById("fondstyp")?.value || "aktien",
+    basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+    use_lifo: document.getElementById("use_lifo")?.checked ?? false,
+    rent_mode: mode,
+    rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
+    capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+    capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+    capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+    capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+    loss_pot: readNumber("loss_pot", { min: 0 }),
+  };
+}
+
+/**
+ * Liest MC-Optionen aus dem Formular
+ */
+function readMcOptionsFromForm() {
+  const iterations = readNumber("mc_iterations", { min: 100, max: 100000 });
+  const volatility = readNumber("mc_volatility", { min: 1, max: 50 });
+  const successThreshold = readNumber("mc_success_threshold", { min: 0, max: 1000000 });
+  const ruinThresholdPercent = readNumber("mc_ruin_threshold", { min: 1, max: 50 });
+  const seed = readNumber("mc_seed", { min: 0, max: 999999 });
+  
+  return {
+    iterations: Math.min(iterations, 2000), // Für Optimierung reduziert
+    volatility,
+    successThreshold,
+    ruinThresholdPercent,
+    seed: seed > 0 ? seed : null,
+  };
+}
+
+/**
+ * Initialisiert den Optimizer Worker
+ */
+function initOptimizerWorker() {
+  if (optimizerWorker) {
+    optimizerWorker.terminate();
+  }
+  
+  try {
+    optimizerWorker = new Worker('optimizer-worker.js');
+    
+    optimizerWorker.onmessage = function(e) {
+      const { type, current, total, percent, currentCandidate, best, message } = e.data;
+      
+      switch (type) {
+        case 'progress':
+          if (optimizeProgressBar) optimizeProgressBar.value = percent;
+          if (optimizeProgressText) {
+            let candInfo = '';
+            if (currentCandidate) {
+              const isPercentMode = currentCandidate.rent_mode === 'percent' || 
+                (currentCandidate.monthly_payout_percent != null && currentCandidate.monthly_payout_percent > 0);
+              if (isPercentMode) {
+                candInfo = `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_percent}%`;
+              } else {
+                candInfo = `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_net}€`;
+              }
+            }
+            let baseText = `${current}/${total} (${percent}%)`;
+            if (optimizerEtaTracker && typeof total === "number" && total > 0) {
+              if (current === 1) {
+                optimizerEtaTracker.start(total);
+              }
+              optimizerEtaTracker.update(current);
+              const eta = optimizerEtaTracker.getEta();
+              if (eta.formatted) {
+                baseText += `, ETA ${eta.formatted}`;
+              }
+            }
+            if (candInfo) {
+              baseText += ` ${candInfo}`;
+            }
+            optimizeProgressText.textContent = baseText;
+          }
+          break;
+          
+        case 'complete':
+          handleOptimizationComplete(best, message);
+          break;
+          
+        case 'error':
+          handleOptimizationError(message);
+          break;
+      }
+    };
+    
+    optimizerWorker.onerror = function(err) {
+      handleOptimizationError(err.message || 'Worker-Fehler');
+    };
+    
+    return true;
+  } catch (err) {
+    console.error('Worker konnte nicht initialisiert werden:', err);
+    return false;
+  }
+}
+
+/**
+ * Startet die Optimierung
+ */
+function startOptimization() {
+  if (isOptimizing) return;
+  
+  try {
+    const params = readParamsFromForm();
+    const mcOptions = readMcOptionsFromForm();
+    
+    // Target Success aus mc_success_threshold übernehmen
+    // Erfolgswahrscheinlichkeit = 100 - ruinThresholdPercent (vereinfacht)
+    const targetSuccess = 90; // Standard-Ziel
+    
+    // Max Budget = monthly_savings + monthly_etf
+    const maxBudget = (params.monthly_savings || 0) + (params.monthly_etf || 0);
+    
+    const gridConfig = {
+      maxBudget,
+      tgStep: 50,
+      rentStep: 50,
+      rentRange: 0.5, // ±50%
+      targetSuccess,
+      maxCombinations: 60
+    };
+    
+    // Worker initialisieren
+    if (!initOptimizerWorker()) {
+      // Fallback: Synchrone Warnung
+      handleOptimizationError('Web Worker nicht verfügbar. Optimierung kann nicht durchgeführt werden.');
+      return;
+    }
+    optimizerEtaTracker = createEtaTracker({ minSamples: 3, minElapsedMs: 2000, alpha: 0.3 });
+    
+    // UI aktualisieren
+    isOptimizing = true;
+    setOptimizingState(true);
+    
+    if (optimizationResultsEl) optimizationResultsEl.style.display = 'block';
+    if (optimizationProgressEl) optimizationProgressEl.style.display = 'flex';
+    if (optimizationResultPanelEl) optimizationResultPanelEl.style.display = 'none';
+    if (optimizationErrorEl) optimizationErrorEl.style.display = 'none';
+    
+    // Zum MC-Tab wechseln
+    switchToTab('monte-carlo');
+    
+    // Seed für Common Random Numbers
+    const seedBase = mcOptions.seed || Date.now();
+    
+    // Worker starten
+    optimizerWorker.postMessage({
+      type: 'start',
+      params,
+      mcOptions,
+      mode: 'A', // Modus A: Budget fix, Rente maximieren
+      gridConfig,
+      seedBase
+    });
+    
+    messageEl.textContent = 'Optimierung gestartet...';
+    
+  } catch (err) {
+    handleOptimizationError(err.message);
+  }
+}
+
+/**
+ * Bricht die Optimierung ab
+ */
+function cancelOptimization() {
+  if (optimizerWorker) {
+    optimizerWorker.terminate();
+    optimizerWorker = null;
+  }
+  
+  isOptimizing = false;
+  setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  messageEl.textContent = 'Optimierung abgebrochen.';
+}
+
+/**
+ * Verarbeitet das Optimierungsergebnis
+ */
+function handleOptimizationComplete(best, message) {
+  isOptimizing = false;
+  setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  
+  if (!best) {
+    if (optimizationErrorEl) {
+      optimizationErrorEl.style.display = 'flex';
+      const errorText = document.getElementById('optimization-error-text');
+      if (errorText) {
+        errorText.textContent = message || 'Keine gültige Konfiguration gefunden. Alle Kombinationen unter Ziel-Erfolgswahrscheinlichkeit.';
+      }
+    }
+    messageEl.textContent = 'Optimierung abgeschlossen: Keine optimale Konfiguration gefunden.';
+    return;
+  }
+  
+  lastOptimization = best;
+  renderOptimizationResult(best);
+  
+  if (optimizationResultPanelEl) optimizationResultPanelEl.style.display = 'block';
+  messageEl.textContent = 'Optimierung abgeschlossen!';
+}
+
+/**
+ * Verarbeitet Optimierungsfehler
+ */
+function handleOptimizationError(errorMessage) {
+  isOptimizing = false;
+  setOptimizingState(false);
+  if (optimizerEtaTracker) {
+    optimizerEtaTracker.stop();
+    optimizerEtaTracker = null;
+  }
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  
+  if (optimizationErrorEl) {
+    optimizationErrorEl.style.display = 'flex';
+    const errorText = document.getElementById('optimization-error-text');
+    if (errorText) {
+      errorText.textContent = errorMessage || 'Unbekannter Fehler bei der Optimierung.';
+    }
+  }
+  
+  messageEl.textContent = 'Fehler bei der Optimierung: ' + errorMessage;
+}
+
+/**
+ * Aktualisiert UI-Zustand während Optimierung
+ */
+function setOptimizingState(optimizing) {
+  const btnMc = document.getElementById('btn-monte-carlo');
+  const submitBtn = form.querySelector('button[type="submit"]');
+  
+  if (btnOptimize) {
+    btnOptimize.disabled = optimizing;
+    // Nur Text ändern, SVG-Icon beibehalten
+    const textNode = Array.from(btnOptimize.childNodes).find(
+      n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0
+    );
+    if (textNode) {
+      textNode.textContent = optimizing ? ' Optimiere...' : ' Parameter optimieren';
+    } else if (!optimizing) {
+      // Falls kein Textknoten gefunden, Button-Text wiederherstellen
+      btnOptimize.textContent = 'Parameter optimieren';
+    }
+  }
+  if (btnMc) btnMc.disabled = optimizing;
+  if (submitBtn) submitBtn.disabled = optimizing;
+}
+
+/**
+ * Rendert das Optimierungsergebnis
+ */
+function renderOptimizationResult(best) {
+  const { params, results, score } = best;
+  
+  // Parameter anzeigen
+  const setStat = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+  
+  const totalBudget = (params.monthly_savings || 0) + (params.monthly_etf || 0);
+  
+  // Prüfe ob Percent-Modus aktiv ist
+  const isPercentMode = params.rent_mode === 'percent' || 
+    (params.monthly_payout_percent != null && params.monthly_payout_percent > 0);
+  
+  setStat('opt-monthly-savings', `${nf0.format(params.monthly_savings || 0)} €`);
+  setStat('opt-monthly-etf', `${nf0.format(params.monthly_etf || 0)} €`);
+  
+  // Rente je nach Modus anzeigen
+  if (isPercentMode) {
+    setStat('opt-rent-eur', `${params.monthly_payout_percent || 0} %`);
+  } else {
+    setStat('opt-rent-eur', `${nf0.format(params.monthly_payout_net || 0)} €`);
+  }
+  
+  setStat('opt-total-budget', `${nf0.format(totalBudget)} €`);
+  
+  // Kennzahlen anzeigen
+  setStat('opt-success-rate', `${results.successRate.toFixed(1)}%`);
+  setStat('opt-ruin-probability', `${results.ruinProbability.toFixed(1)}%`);
+  setStat('opt-median-end-real', formatCurrency(results.medianEndReal || 0));
+  setStat('opt-retirement-median', formatCurrency(results.retirementMedian || 0));
+  setStat('opt-capital-preservation', `${(results.capitalPreservationRateReal || 0).toFixed(1)}%`);
+  setStat('opt-range-end', `${formatCurrency(results.p10EndReal || 0)} - ${formatCurrency(results.p90EndReal || 0)}`);
+  const emergencyProb = results.emergencyFillProbability;
+  const emergencyYears = results.emergencyMedianFillYears;
+  const emergencyProbText = emergencyProb != null ? `${emergencyProb.toFixed(1)}%` : '-';
+  const emergencyYearsText = emergencyYears != null && Number.isFinite(emergencyYears)
+    ? `${nf1.format(emergencyYears)} Jahre`
+    : (emergencyProb === 0 ? 'nie' : '-');
+  setStat('opt-emergency-fill-prob', emergencyProbText);
+  setStat('opt-emergency-fill-years', emergencyYearsText);
+  
+  // Erfolgsrate Farbe
+  const successEl = document.getElementById('opt-success-rate');
+  if (successEl) {
+    successEl.classList.remove('success-high', 'success-medium', 'success-low');
+    if (results.successRate >= 95) {
+      successEl.classList.add('success-high');
+    } else if (results.successRate >= 80) {
+      successEl.classList.add('success-medium');
+    } else {
+      successEl.classList.add('success-low');
+    }
+  }
+
+  const emergencyProbEl = document.getElementById('opt-emergency-fill-prob');
+  if (emergencyProbEl && emergencyProb != null) {
+    emergencyProbEl.classList.remove('stat-value--success', 'stat-value--warning', 'stat-value--danger');
+    if (emergencyProb >= 90) {
+      emergencyProbEl.classList.add('stat-value--success');
+    } else if (emergencyProb >= 60) {
+      emergencyProbEl.classList.add('stat-value--warning');
+    } else {
+      emergencyProbEl.classList.add('stat-value--danger');
+    }
+  }
+}
+
+/**
+ * Übernimmt die optimierten Werte in die Formularfelder
+ * Unterstützt sowohl EUR-Modus als auch Percent-Modus
+ */
+function applyOptimizedParams(params) {
+  const setField = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && value != null) {
+      el.value = value;
+    }
+  };
+  
+  // Sparraten immer setzen
+  setField('monthly_savings', params.monthly_savings);
+  setField('monthly_etf', params.monthly_etf);
+  
+  // Prüfe ob Percent-Modus aktiv ist
+  const isPercentMode = params.rent_mode === 'percent' || 
+    (params.monthly_payout_percent != null && params.monthly_payout_percent > 0);
+  
+  if (isPercentMode) {
+    // Percent-Modus: Prozentuale Entnahme setzen
+    setField('rent_percent', params.monthly_payout_percent);
+    const percentRadio = form.querySelector('input[name="rent_mode"][value="percent"]');
+    if (percentRadio) {
+      percentRadio.checked = true;
+      updateRentModeFields?.();
+    }
+  } else {
+    // EUR-Modus: Festen Betrag setzen
+    setField('rent_eur', params.monthly_payout_net);
+    const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
+    if (eurRadio) {
+      eurRadio.checked = true;
+      updateRentModeFields?.();
+    }
+  }
+  
+  // In Storage speichern
+  const storedParams = readParamsFromForm();
+  saveToStorage(storedParams);
+  
+  const modeText = isPercentMode ? `${params.monthly_payout_percent}% p.a.` : `${params.monthly_payout_net}€/Monat`;
+  messageEl.textContent = `Optimierte Werte übernommen (${modeText}).`;
+}
+
+// ============ EVENT HANDLERS ============
+
+// Optimierung aktivieren nach erfolgreicher MC-Simulation
+// (wird in runMonteCarloSimulation aufgerufen)
+const originalRunMonteCarlo = runMonteCarloSimulation;
+async function runMonteCarloSimulationWithOptimizeButton(params, iterations, volatility, showIndividual, mcOptions) {
+  const result = await originalRunMonteCarlo(params, iterations, volatility, showIndividual, mcOptions);
+  
+  // Optimize-Button aktivieren nach MC-Run
+  if (btnOptimize) {
+    btnOptimize.disabled = false;
+    btnOptimize.title = 'Parameter automatisch optimieren';
+  }
+  
+  return result;
+}
+
+// Optimize Button
+btnOptimize?.addEventListener('click', startOptimization);
+
+// Cancel Button
+document.getElementById('btn-cancel-optimize')?.addEventListener('click', cancelOptimization);
+
+// Werte übernehmen
+document.getElementById('btn-apply-optimization')?.addEventListener('click', () => {
+  if (lastOptimization?.params) {
+    applyOptimizedParams(lastOptimization.params);
+  }
+});
+
+// Übernehmen & MC starten
+document.getElementById('btn-apply-and-run')?.addEventListener('click', async () => {
+  if (lastOptimization?.params) {
+    applyOptimizedParams(lastOptimization.params);
+    
+    // Kurz warten, dann MC starten
+    await new Promise(r => setTimeout(r, 100));
+    document.getElementById('btn-monte-carlo')?.click();
+  }
+});
+
+// Theme initialisieren (nachdem DOM-Elemente vorhanden sind)
+initThemeFromStorage();
