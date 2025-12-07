@@ -437,6 +437,12 @@
         <div class="actions">
           <button type="submit" class="btn btn--primary">Simulation starten</button>
           <button type="button" id="btn-monte-carlo" class="btn btn--accent">Monte-Carlo starten</button>
+          <button type="button" id="btn-optimize" class="btn btn--optimize" disabled title="Erst Monte-Carlo starten, dann optimieren">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+            Parameter optimieren
+          </button>
           <div class="btn-group">
             <button type="button" id="btn-reset" class="btn btn--secondary">Zurücksetzen</button>
             <div class="export-dropdown">
@@ -913,6 +919,102 @@
             </div>
           </div>
         </div>
+
+        <!-- Optimierungs-Ergebnisse -->
+        <div id="optimization-results" class="optimization-results" style="display: none;">
+          <div class="optimization-header">
+            <h3>
+              <svg class="optimization-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+              Optimale Einstellungen
+            </h3>
+            <span class="optimization-mode" id="optimization-mode">Modus A: Budget fix, Rente maximieren</span>
+          </div>
+          
+          <!-- Fortschrittsanzeige während Optimierung -->
+          <div class="optimization-progress" id="optimization-progress" style="display: none;">
+            <progress id="optimize-progress-bar" value="0" max="100"></progress>
+            <span id="optimize-progress-text">Starte Optimierung...</span>
+            <button type="button" class="btn btn--secondary btn--small" id="btn-cancel-optimize">Abbrechen</button>
+          </div>
+          
+          <!-- Ergebnis-Panel -->
+          <div class="optimization-result-panel" id="optimization-result-panel" style="display: none;">
+            <div class="optimization-params">
+              <h4>Gefundene Parameter</h4>
+              <div class="optimization-params-grid">
+                <div class="optimization-param">
+                  <span class="param-label">Monatlich Tagesgeld</span>
+                  <span class="param-value" id="opt-monthly-savings">-</span>
+                </div>
+                <div class="optimization-param">
+                  <span class="param-label">Monatlich ETF</span>
+                  <span class="param-value" id="opt-monthly-etf">-</span>
+                </div>
+                <div class="optimization-param">
+                  <span class="param-label">Wunschrente (EUR)</span>
+                  <span class="param-value" id="opt-rent-eur">-</span>
+                </div>
+                <div class="optimization-param">
+                  <span class="param-label">Gesamtes Budget</span>
+                  <span class="param-value" id="opt-total-budget">-</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="optimization-metrics">
+              <h4>Ergebnis-Kennzahlen</h4>
+              <div class="stats-grid stats-grid--mc">
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Erfolgswahrscheinlichkeit</span>
+                  <span class="stat-value stat-value--highlight" id="opt-success-rate">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Ruin-Risiko</span>
+                  <span class="stat-value" id="opt-ruin-probability">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Median-Endvermögen (real)</span>
+                  <span class="stat-value" id="opt-median-end-real">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Vermögen bei Rentenbeginn</span>
+                  <span class="stat-value" id="opt-retirement-median">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Kapitalerhalt (real)</span>
+                  <span class="stat-value" id="opt-capital-preservation">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Spanne (10%-90%)</span>
+                  <span class="stat-value" id="opt-range-end">-</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="optimization-actions">
+              <button type="button" class="btn btn--primary" id="btn-apply-optimization">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Werte übernehmen
+              </button>
+              <button type="button" class="btn btn--accent" id="btn-apply-and-run">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Übernehmen &amp; MC starten
+              </button>
+            </div>
+          </div>
+          
+          <!-- Fehlermeldung -->
+          <div class="optimization-error" id="optimization-error" style="display: none;">
+            <span class="optimization-error-icon">⚠️</span>
+            <span class="optimization-error-text" id="optimization-error-text">Fehler bei der Optimierung.</span>
+          </div>
+        </div>
       </div>
 
       <!-- Tab: Jahresübersicht -->
@@ -955,6 +1057,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="simulation-core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

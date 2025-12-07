@@ -4114,53 +4114,144 @@ function renderMonteCarloGraph(results) {
   mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
 }
 
-// Monte-Carlo Button Event Handler
+// ============ MONTE-CARLO WEB WORKER ============
+
+let mcWorker = null;
+let mcWorkerRunning = false;
+
+/**
+ * Initialisiert den MC-Worker
+ */
+function initMcWorker() {
+  if (mcWorker) {
+    mcWorker.terminate();
+  }
+  
+  try {
+    mcWorker = new Worker('mc-worker.js');
+    return true;
+  } catch (err) {
+    console.warn('MC-Worker konnte nicht initialisiert werden, nutze Fallback:', err);
+    return false;
+  }
+}
+
+/**
+ * Führt MC-Simulation im Worker aus
+ */
+function runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions) {
+  return new Promise((resolve, reject) => {
+    if (!initMcWorker()) {
+      // Fallback auf synchrone Simulation
+      console.warn('Fallback auf Main-Thread Monte-Carlo');
+      runMonteCarloSimulation(params, iterations, volatility, showIndividual, mcOptions)
+        .then(resolve)
+        .catch(reject);
+      return;
+    }
+    
+    mcWorkerRunning = true;
+    
+    mcWorker.onmessage = function(e) {
+      const { type, current, total, percent, results, message } = e.data;
+      
+      switch (type) {
+        case 'progress':
+          mcProgressEl.value = percent;
+          mcProgressTextEl.textContent = `${current} / ${total} (${percent}%)`;
+          break;
+          
+        case 'complete':
+          mcWorkerRunning = false;
+          
+          // Ergebnisse verarbeiten
+          results.showIndividual = showIndividual;
+          lastMcResults = results;
+          
+          // UI aktualisieren
+          renderMonteCarloStats(results);
+          renderMonteCarloGraph(results);
+          
+          mcProgressTextEl.textContent = "Fertig!";
+          resolve(results);
+          break;
+          
+        case 'error':
+          mcWorkerRunning = false;
+          reject(new Error(message));
+          break;
+      }
+    };
+    
+    mcWorker.onerror = function(err) {
+      mcWorkerRunning = false;
+      reject(new Error(err.message || 'Worker-Fehler'));
+    };
+    
+    // Worker starten
+    mcWorker.postMessage({
+      type: 'start',
+      params,
+      iterations,
+      volatility,
+      mcOptions
+    });
+  });
+}
+
+// Monte-Carlo Button Event Handler (mit Web Worker)
 document.getElementById("btn-monte-carlo")?.addEventListener("click", async () => {
   try {
     messageEl.textContent = "";
-    const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
-    const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
-    const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
-    const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
     
-    const params = {
-      start_savings: readNumber("start_savings", { min: 0 }),
-      start_etf: readNumber("start_etf", { min: 0 }),
-      start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
-      monthly_savings: readNumber("monthly_savings", { min: 0 }),
-      monthly_etf: readNumber("monthly_etf", { min: 0 }),
-      savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
-      etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
-      etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
-      savings_target: readNumber("savings_target", { min: 0 }),
-      annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
-      savings_years: readNumber("years_save", { min: 1, max: 100 }),
-      withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
-      monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
-      monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
-      withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
-      withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
-      inflation_adjust_withdrawal: inflationAdjust,
-      special_payout_net_savings: readNumber("special_savings", { min: 0 }),
-      special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
-      inflation_adjust_special_savings: inflationAdjustSpecialSavings,
-      special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
-      special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
-      inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
-      inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
-      sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
-      kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
-      fondstyp: document.getElementById("fondstyp")?.value || "aktien",
-      basiszins: readNumber("basiszins", { min: 0, max: 10 }),
-      use_lifo: document.getElementById("use_lifo")?.checked ?? false,
-      rent_mode: mode,
-      rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
-      capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
-      capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
-      capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
-      capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
-      loss_pot: readNumber("loss_pot", { min: 0 }),
-    };
+    // Parameter aus Formular lesen (nutze gemeinsame Funktion falls verfügbar)
+    const params = typeof readParamsFromForm === 'function' 
+      ? readParamsFromForm() 
+      : (() => {
+          const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+          const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+          const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+          const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+          
+          return {
+            start_savings: readNumber("start_savings", { min: 0 }),
+            start_etf: readNumber("start_etf", { min: 0 }),
+            start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
+            monthly_savings: readNumber("monthly_savings", { min: 0 }),
+            monthly_etf: readNumber("monthly_etf", { min: 0 }),
+            savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+            etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+            etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
+            savings_target: readNumber("savings_target", { min: 0 }),
+            annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+            savings_years: readNumber("years_save", { min: 1, max: 100 }),
+            withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+            monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+            monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+            withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+            withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+            inflation_adjust_withdrawal: inflationAdjust,
+            special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+            special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+            inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+            special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+            special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+            inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
+            inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+            sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+            kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+            fondstyp: document.getElementById("fondstyp")?.value || "aktien",
+            basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+            use_lifo: document.getElementById("use_lifo")?.checked ?? false,
+            rent_mode: mode,
+            rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
+            capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+            capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+            capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+            capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+            loss_pot: readNumber("loss_pot", { min: 0 }),
+          };
+        })();
     
     // Params für Export speichern
     lastParams = params;
@@ -4178,28 +4269,69 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
       seed: seed > 0 ? seed : null,
     };
     
+    // Zum MC-Tab wechseln und UI vorbereiten
+    switchToTab("monte-carlo");
+    if (mcEmptyStateEl) mcEmptyStateEl.style.display = "none";
+    if (mcResultsEl) mcResultsEl.style.display = "block";
+    
+    // Prüfe auf optimistische Parameter
+    const paramWarnings = checkOptimisticParameters(params, volatility);
+    const warningsEl = document.getElementById("mc-warnings");
+    const warningContainerEl = document.getElementById("mc-warning-optimistic");
+    const warningTextEl = document.getElementById("mc-warning-text");
+    if (warningsEl && warningTextEl && warningContainerEl) {
+      if (paramWarnings.length > 0) {
+        const hasCritical = paramWarnings.some(w => w.severity === "critical");
+        warningContainerEl.classList.toggle("mc-warning--critical", hasCritical);
+        const iconEl = warningContainerEl.querySelector(".mc-warning-icon");
+        if (iconEl) iconEl.textContent = hasCritical ? "🚨" : "⚠️";
+        warningTextEl.innerHTML = paramWarnings.map(w => w.text).join("<br>");
+        warningsEl.style.display = "block";
+      } else {
+        warningsEl.style.display = "none";
+      }
+    }
+    
+    mcProgressEl.value = 0;
+    mcProgressTextEl.textContent = "Starte Worker...";
+    
     // Button deaktivieren während Simulation läuft
     const btn = document.getElementById("btn-monte-carlo");
+    const btnOpt = document.getElementById("btn-optimize");
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Simuliere...";
     }
+    if (btnOpt) btnOpt.disabled = true;
     
-    await runMonteCarloSimulation(params, iterations, volatility, showIndividual, mcOptions);
+    // Worker nutzen
+    await runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions);
     
     if (btn) {
       btn.disabled = false;
       btn.textContent = "Monte-Carlo starten";
     }
     
-    messageEl.textContent = `Monte-Carlo-Simulation abgeschlossen (${iterations} Durchläufe).`;
+    // Optimize-Button aktivieren nach erfolgreicher MC-Simulation
+    if (btnOpt) {
+      btnOpt.disabled = false;
+      btnOpt.title = "Parameter automatisch optimieren";
+    }
+    
+    // Badge im Tab anzeigen
+    if (mcBadgeEl) mcBadgeEl.style.display = "inline";
+    
+    messageEl.textContent = `Monte-Carlo-Simulation abgeschlossen (${iterations} Durchläufe, Worker).`;
   } catch (err) {
     const btn = document.getElementById("btn-monte-carlo");
+    const btnOpt = document.getElementById("btn-optimize");
     if (btn) {
       btn.disabled = false;
       btn.textContent = "Monte-Carlo starten";
     }
+    if (btnOpt) btnOpt.disabled = true;
     messageEl.textContent = err.message || String(err);
+    console.error('MC-Simulation Fehler:', err);
   }
 });
 
@@ -4279,3 +4411,402 @@ function handleMcHover(evt) {
 
 mcGraphCanvas?.addEventListener("mousemove", handleMcHover);
 mcGraphCanvas?.addEventListener("mouseleave", hideTooltip);
+
+// ============ OPTIMIZATION SYSTEM ============
+
+let optimizerWorker = null;
+let lastOptimization = null;
+let isOptimizing = false;
+
+// UI-Elemente für Optimierung
+const btnOptimize = document.getElementById("btn-optimize");
+const optimizationResultsEl = document.getElementById("optimization-results");
+const optimizationProgressEl = document.getElementById("optimization-progress");
+const optimizationResultPanelEl = document.getElementById("optimization-result-panel");
+const optimizationErrorEl = document.getElementById("optimization-error");
+const optimizeProgressBar = document.getElementById("optimize-progress-bar");
+const optimizeProgressText = document.getElementById("optimize-progress-text");
+
+/**
+ * Liest alle Parameter aus dem Formular.
+ * Gemeinsame Funktion für Standard-, MC- und Optimierungs-Simulation.
+ */
+function readParamsFromForm() {
+  const mode = form.querySelector('input[name="rent_mode"]:checked')?.value || "eur";
+  const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
+  const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
+  const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
+  
+  return {
+    start_savings: readNumber("start_savings", { min: 0 }),
+    start_etf: readNumber("start_etf", { min: 0 }),
+    start_etf_cost_basis: readNumber("start_etf_cost_basis", { min: 0 }),
+    monthly_savings: readNumber("monthly_savings", { min: 0 }),
+    monthly_etf: readNumber("monthly_etf", { min: 0 }),
+    savings_rate_pa: readNumber("savings_rate", { min: -10, max: 50 }),
+    etf_rate_pa: readNumber("etf_rate", { min: -50, max: 50 }),
+    etf_ter_pa: readNumber("etf_ter", { min: 0, max: 5 }),
+    savings_target: readNumber("savings_target", { min: 0 }),
+    annual_raise_percent: readNumber("annual_raise", { min: -10, max: 50 }),
+    savings_years: readNumber("years_save", { min: 1, max: 100 }),
+    withdrawal_years: readNumber("years_withdraw", { min: 1, max: 100 }),
+    monthly_payout_net: mode === "eur" ? readNumber("rent_eur", { min: 0 }) : null,
+    monthly_payout_percent: mode === "percent" ? readNumber("rent_percent", { min: 0, max: 100 }) : null,
+    withdrawal_min: readNumber("withdrawal_min", { min: 0 }),
+    withdrawal_max: readNumber("withdrawal_max", { min: 0 }),
+    inflation_adjust_withdrawal: inflationAdjust,
+    special_payout_net_savings: readNumber("special_savings", { min: 0 }),
+    special_interval_years_savings: readNumber("special_savings_interval", { min: 0 }),
+    inflation_adjust_special_savings: inflationAdjustSpecialSavings,
+    special_payout_net_withdrawal: readNumber("special_withdraw", { min: 0 }),
+    special_interval_years_withdrawal: readNumber("special_withdraw_interval", { min: 0 }),
+    inflation_adjust_special_withdrawal: inflationAdjustSpecialWithdrawal,
+    inflation_rate_pa: readNumber("inflation_rate", { min: -10, max: 30 }),
+    sparerpauschbetrag: readNumber("sparerpauschbetrag", { min: 0, max: 10000 }),
+    kirchensteuer: document.getElementById("kirchensteuer")?.value || "keine",
+    fondstyp: document.getElementById("fondstyp")?.value || "aktien",
+    basiszins: readNumber("basiszins", { min: 0, max: 10 }),
+    use_lifo: document.getElementById("use_lifo")?.checked ?? false,
+    rent_mode: mode,
+    rent_is_gross: document.getElementById("rent_is_gross")?.checked ?? false,
+    capital_preservation_enabled: document.getElementById("capital_preservation_enabled")?.checked ?? false,
+    capital_preservation_threshold: readNumber("capital_preservation_threshold", { min: 10, max: 100 }),
+    capital_preservation_reduction: readNumber("capital_preservation_reduction", { min: 5, max: 75 }),
+    capital_preservation_recovery: readNumber("capital_preservation_recovery", { min: 0, max: 50 }),
+    loss_pot: readNumber("loss_pot", { min: 0 }),
+  };
+}
+
+/**
+ * Liest MC-Optionen aus dem Formular
+ */
+function readMcOptionsFromForm() {
+  const iterations = readNumber("mc_iterations", { min: 100, max: 100000 });
+  const volatility = readNumber("mc_volatility", { min: 1, max: 50 });
+  const successThreshold = readNumber("mc_success_threshold", { min: 0, max: 1000000 });
+  const ruinThresholdPercent = readNumber("mc_ruin_threshold", { min: 1, max: 50 });
+  const seed = readNumber("mc_seed", { min: 0, max: 999999 });
+  
+  return {
+    iterations: Math.min(iterations, 2000), // Für Optimierung reduziert
+    volatility,
+    successThreshold,
+    ruinThresholdPercent,
+    seed: seed > 0 ? seed : null,
+  };
+}
+
+/**
+ * Initialisiert den Optimizer Worker
+ */
+function initOptimizerWorker() {
+  if (optimizerWorker) {
+    optimizerWorker.terminate();
+  }
+  
+  try {
+    optimizerWorker = new Worker('optimizer-worker.js');
+    
+    optimizerWorker.onmessage = function(e) {
+      const { type, current, total, percent, currentCandidate, best, message } = e.data;
+      
+      switch (type) {
+        case 'progress':
+          if (optimizeProgressBar) optimizeProgressBar.value = percent;
+          if (optimizeProgressText) {
+            const candInfo = currentCandidate 
+              ? `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_net}€`
+              : '';
+            optimizeProgressText.textContent = `${current}/${total} (${percent}%) ${candInfo}`;
+          }
+          break;
+          
+        case 'complete':
+          handleOptimizationComplete(best, message);
+          break;
+          
+        case 'error':
+          handleOptimizationError(message);
+          break;
+      }
+    };
+    
+    optimizerWorker.onerror = function(err) {
+      handleOptimizationError(err.message || 'Worker-Fehler');
+    };
+    
+    return true;
+  } catch (err) {
+    console.error('Worker konnte nicht initialisiert werden:', err);
+    return false;
+  }
+}
+
+/**
+ * Startet die Optimierung
+ */
+function startOptimization() {
+  if (isOptimizing) return;
+  
+  try {
+    const params = readParamsFromForm();
+    const mcOptions = readMcOptionsFromForm();
+    
+    // Target Success aus mc_success_threshold übernehmen
+    // Erfolgswahrscheinlichkeit = 100 - ruinThresholdPercent (vereinfacht)
+    const targetSuccess = 90; // Standard-Ziel
+    
+    // Max Budget = monthly_savings + monthly_etf
+    const maxBudget = (params.monthly_savings || 0) + (params.monthly_etf || 0);
+    
+    const gridConfig = {
+      maxBudget,
+      tgStep: 50,
+      rentStep: 50,
+      rentRange: 0.5, // ±50%
+      targetSuccess,
+      maxCombinations: 60
+    };
+    
+    // Worker initialisieren
+    if (!initOptimizerWorker()) {
+      // Fallback: Synchrone Warnung
+      handleOptimizationError('Web Worker nicht verfügbar. Optimierung kann nicht durchgeführt werden.');
+      return;
+    }
+    
+    // UI aktualisieren
+    isOptimizing = true;
+    setOptimizingState(true);
+    
+    if (optimizationResultsEl) optimizationResultsEl.style.display = 'block';
+    if (optimizationProgressEl) optimizationProgressEl.style.display = 'flex';
+    if (optimizationResultPanelEl) optimizationResultPanelEl.style.display = 'none';
+    if (optimizationErrorEl) optimizationErrorEl.style.display = 'none';
+    
+    // Zum MC-Tab wechseln
+    switchToTab('monte-carlo');
+    
+    // Seed für Common Random Numbers
+    const seedBase = mcOptions.seed || Date.now();
+    
+    // Worker starten
+    optimizerWorker.postMessage({
+      type: 'start',
+      params,
+      mcOptions,
+      mode: 'A', // Modus A: Budget fix, Rente maximieren
+      gridConfig,
+      seedBase
+    });
+    
+    messageEl.textContent = 'Optimierung gestartet...';
+    
+  } catch (err) {
+    handleOptimizationError(err.message);
+  }
+}
+
+/**
+ * Bricht die Optimierung ab
+ */
+function cancelOptimization() {
+  if (optimizerWorker) {
+    optimizerWorker.terminate();
+    optimizerWorker = null;
+  }
+  
+  isOptimizing = false;
+  setOptimizingState(false);
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  messageEl.textContent = 'Optimierung abgebrochen.';
+}
+
+/**
+ * Verarbeitet das Optimierungsergebnis
+ */
+function handleOptimizationComplete(best, message) {
+  isOptimizing = false;
+  setOptimizingState(false);
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  
+  if (!best) {
+    if (optimizationErrorEl) {
+      optimizationErrorEl.style.display = 'flex';
+      const errorText = document.getElementById('optimization-error-text');
+      if (errorText) {
+        errorText.textContent = message || 'Keine gültige Konfiguration gefunden. Alle Kombinationen unter Ziel-Erfolgswahrscheinlichkeit.';
+      }
+    }
+    messageEl.textContent = 'Optimierung abgeschlossen: Keine optimale Konfiguration gefunden.';
+    return;
+  }
+  
+  lastOptimization = best;
+  renderOptimizationResult(best);
+  
+  if (optimizationResultPanelEl) optimizationResultPanelEl.style.display = 'block';
+  messageEl.textContent = 'Optimierung abgeschlossen!';
+}
+
+/**
+ * Verarbeitet Optimierungsfehler
+ */
+function handleOptimizationError(errorMessage) {
+  isOptimizing = false;
+  setOptimizingState(false);
+  
+  if (optimizationProgressEl) optimizationProgressEl.style.display = 'none';
+  
+  if (optimizationErrorEl) {
+    optimizationErrorEl.style.display = 'flex';
+    const errorText = document.getElementById('optimization-error-text');
+    if (errorText) {
+      errorText.textContent = errorMessage || 'Unbekannter Fehler bei der Optimierung.';
+    }
+  }
+  
+  messageEl.textContent = 'Fehler bei der Optimierung: ' + errorMessage;
+}
+
+/**
+ * Aktualisiert UI-Zustand während Optimierung
+ */
+function setOptimizingState(optimizing) {
+  const btnMc = document.getElementById('btn-monte-carlo');
+  const submitBtn = form.querySelector('button[type="submit"]');
+  
+  if (btnOptimize) {
+    btnOptimize.disabled = optimizing;
+    // Nur Text ändern, SVG-Icon beibehalten
+    const textNode = Array.from(btnOptimize.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+    if (textNode) {
+      textNode.textContent = optimizing ? ' Optimiere...' : ' Parameter optimieren';
+    } else if (!optimizing) {
+      // Falls kein Textknoten gefunden, Button-Inhalt wiederherstellen
+      btnOptimize.innerHTML = `
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+        Parameter optimieren
+      `;
+    }
+  }
+  if (btnMc) btnMc.disabled = optimizing;
+  if (submitBtn) submitBtn.disabled = optimizing;
+}
+
+/**
+ * Rendert das Optimierungsergebnis
+ */
+function renderOptimizationResult(best) {
+  const { params, results, score } = best;
+  
+  // Parameter anzeigen
+  const setStat = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+  
+  const totalBudget = (params.monthly_savings || 0) + (params.monthly_etf || 0);
+  
+  setStat('opt-monthly-savings', `${nf0.format(params.monthly_savings || 0)} €`);
+  setStat('opt-monthly-etf', `${nf0.format(params.monthly_etf || 0)} €`);
+  setStat('opt-rent-eur', `${nf0.format(params.monthly_payout_net || 0)} €`);
+  setStat('opt-total-budget', `${nf0.format(totalBudget)} €`);
+  
+  // Kennzahlen anzeigen
+  setStat('opt-success-rate', `${results.successRate.toFixed(1)}%`);
+  setStat('opt-ruin-probability', `${results.ruinProbability.toFixed(1)}%`);
+  setStat('opt-median-end-real', formatCurrency(results.medianEndReal || 0));
+  setStat('opt-retirement-median', formatCurrency(results.retirementMedian || 0));
+  setStat('opt-capital-preservation', `${(results.capitalPreservationRateReal || 0).toFixed(1)}%`);
+  setStat('opt-range-end', `${formatCurrency(results.p10EndReal || 0)} - ${formatCurrency(results.p90EndReal || 0)}`);
+  
+  // Erfolgsrate Farbe
+  const successEl = document.getElementById('opt-success-rate');
+  if (successEl) {
+    successEl.classList.remove('success-high', 'success-medium', 'success-low');
+    if (results.successRate >= 95) {
+      successEl.classList.add('success-high');
+    } else if (results.successRate >= 80) {
+      successEl.classList.add('success-medium');
+    } else {
+      successEl.classList.add('success-low');
+    }
+  }
+}
+
+/**
+ * Übernimmt die optimierten Werte in die Formularfelder
+ */
+function applyOptimizedParams(params) {
+  const setField = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && value != null) {
+      el.value = value;
+    }
+  };
+  
+  setField('monthly_savings', params.monthly_savings);
+  setField('monthly_etf', params.monthly_etf);
+  setField('rent_eur', params.monthly_payout_net);
+  
+  // EUR-Modus aktivieren falls Rente gesetzt
+  if (params.monthly_payout_net != null) {
+    const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
+    if (eurRadio) {
+      eurRadio.checked = true;
+      updateRentModeFields?.();
+    }
+  }
+  
+  // In Storage speichern
+  const storedParams = readParamsFromForm();
+  saveToStorage(storedParams);
+  
+  messageEl.textContent = 'Optimierte Werte übernommen.';
+}
+
+// ============ EVENT HANDLERS ============
+
+// Optimierung aktivieren nach erfolgreicher MC-Simulation
+// (wird in runMonteCarloSimulation aufgerufen)
+const originalRunMonteCarlo = runMonteCarloSimulation;
+async function runMonteCarloSimulationWithOptimizeButton(params, iterations, volatility, showIndividual, mcOptions) {
+  const result = await originalRunMonteCarlo(params, iterations, volatility, showIndividual, mcOptions);
+  
+  // Optimize-Button aktivieren nach MC-Run
+  if (btnOptimize) {
+    btnOptimize.disabled = false;
+    btnOptimize.title = 'Parameter automatisch optimieren';
+  }
+  
+  return result;
+}
+
+// Optimize Button
+btnOptimize?.addEventListener('click', startOptimization);
+
+// Cancel Button
+document.getElementById('btn-cancel-optimize')?.addEventListener('click', cancelOptimization);
+
+// Werte übernehmen
+document.getElementById('btn-apply-optimization')?.addEventListener('click', () => {
+  if (lastOptimization?.params) {
+    applyOptimizedParams(lastOptimization.params);
+  }
+});
+
+// Übernehmen & MC starten
+document.getElementById('btn-apply-and-run')?.addEventListener('click', async () => {
+  if (lastOptimization?.params) {
+    applyOptimizedParams(lastOptimization.params);
+    
+    // Kurz warten, dann MC starten
+    await new Promise(r => setTimeout(r, 100));
+    document.getElementById('btn-monte-carlo')?.click();
+  }
+});
