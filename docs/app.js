@@ -3122,9 +3122,16 @@ function initOptimizerWorker() {
         case 'progress':
           if (optimizeProgressBar) optimizeProgressBar.value = percent;
           if (optimizeProgressText) {
-            const candInfo = currentCandidate 
-              ? `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_net}€`
-              : '';
+            let candInfo = '';
+            if (currentCandidate) {
+              const isPercentMode = currentCandidate.rent_mode === 'percent' || 
+                (currentCandidate.monthly_payout_percent != null && currentCandidate.monthly_payout_percent > 0);
+              if (isPercentMode) {
+                candInfo = `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_percent}%`;
+              } else {
+                candInfo = `TG: ${currentCandidate.monthly_savings}€, ETF: ${currentCandidate.monthly_etf}€, Rente: ${currentCandidate.monthly_payout_net}€`;
+              }
+            }
             optimizeProgressText.textContent = `${current}/${total} (${percent}%) ${candInfo}`;
           }
           break;
@@ -3320,9 +3327,20 @@ function renderOptimizationResult(best) {
   
   const totalBudget = (params.monthly_savings || 0) + (params.monthly_etf || 0);
   
+  // Prüfe ob Percent-Modus aktiv ist
+  const isPercentMode = params.rent_mode === 'percent' || 
+    (params.monthly_payout_percent != null && params.monthly_payout_percent > 0);
+  
   setStat('opt-monthly-savings', `${nf0.format(params.monthly_savings || 0)} €`);
   setStat('opt-monthly-etf', `${nf0.format(params.monthly_etf || 0)} €`);
-  setStat('opt-rent-eur', `${nf0.format(params.monthly_payout_net || 0)} €`);
+  
+  // Rente je nach Modus anzeigen
+  if (isPercentMode) {
+    setStat('opt-rent-eur', `${params.monthly_payout_percent || 0} %`);
+  } else {
+    setStat('opt-rent-eur', `${nf0.format(params.monthly_payout_net || 0)} €`);
+  }
+  
   setStat('opt-total-budget', `${nf0.format(totalBudget)} €`);
   
   // Kennzahlen anzeigen
@@ -3349,6 +3367,7 @@ function renderOptimizationResult(best) {
 
 /**
  * Übernimmt die optimierten Werte in die Formularfelder
+ * Unterstützt sowohl EUR-Modus als auch Percent-Modus
  */
 function applyOptimizedParams(params) {
   const setField = (id, value) => {
@@ -3358,12 +3377,25 @@ function applyOptimizedParams(params) {
     }
   };
   
+  // Sparraten immer setzen
   setField('monthly_savings', params.monthly_savings);
   setField('monthly_etf', params.monthly_etf);
-  setField('rent_eur', params.monthly_payout_net);
   
-  // EUR-Modus aktivieren falls Rente gesetzt
-  if (params.monthly_payout_net != null) {
+  // Prüfe ob Percent-Modus aktiv ist
+  const isPercentMode = params.rent_mode === 'percent' || 
+    (params.monthly_payout_percent != null && params.monthly_payout_percent > 0);
+  
+  if (isPercentMode) {
+    // Percent-Modus: Prozentuale Entnahme setzen
+    setField('rent_percent', params.monthly_payout_percent);
+    const percentRadio = form.querySelector('input[name="rent_mode"][value="percent"]');
+    if (percentRadio) {
+      percentRadio.checked = true;
+      updateRentModeFields?.();
+    }
+  } else {
+    // EUR-Modus: Festen Betrag setzen
+    setField('rent_eur', params.monthly_payout_net);
     const eurRadio = form.querySelector('input[name="rent_mode"][value="eur"]');
     if (eurRadio) {
       eurRadio.checked = true;
@@ -3375,7 +3407,8 @@ function applyOptimizedParams(params) {
   const storedParams = readParamsFromForm();
   saveToStorage(storedParams);
   
-  messageEl.textContent = 'Optimierte Werte übernommen.';
+  const modeText = isPercentMode ? `${params.monthly_payout_percent}% p.a.` : `${params.monthly_payout_net}€/Monat`;
+  messageEl.textContent = `Optimierte Werte übernommen (${modeText}).`;
 }
 
 // ============ EVENT HANDLERS ============

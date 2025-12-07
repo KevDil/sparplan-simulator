@@ -15,13 +15,14 @@ importScripts('simulation-core.js');
 
 // ============ KONSTANTEN ============
 
-const DEFAULT_ITERATIONS = 500; // Reduzierte Iterationen für Optimierung (Speed vs. Genauigkeit)
+const DEFAULT_ITERATIONS = 1000; // Iterationen für Optimierung (Balance: Speed vs. Genauigkeit)
 const MAX_ITERATIONS_OPTIMIZE = 2000; // Hartes Limit für Optimierung
 
 // ============ GRID-GENERIERUNG ============
 
 /**
  * Generiert Kandidaten für Modus A: Budget fix, Rente maximieren
+ * Unterstützt sowohl EUR-Modus (feste Beträge) als auch Percent-Modus (prozentuale Entnahme)
  * @param {Object} baseParams - Ausgangsparameter
  * @param {Object} gridConfig - Grid-Konfiguration
  * @returns {Array} Array von Kandidaten-Parametern
@@ -33,13 +34,14 @@ function generateCandidatesModeA(baseParams, gridConfig) {
     maxBudget = (baseParams.monthly_savings || 0) + (baseParams.monthly_etf || 0),
     tgStep = 50,
     rentStep = 50,
+    rentStepPercent = 0.25, // Schrittweite für Prozent-Modus
     rentRange = 0.5, // ±50% um aktuellen Wert
     maxCombinations = 60
   } = gridConfig;
   
-  const currentRent = baseParams.monthly_payout_net || 1000;
-  const rentMin = Math.max(100, currentRent * (1 - rentRange));
-  const rentMax = currentRent * (1 + rentRange);
+  // Prüfe ob Percent-Modus aktiv ist
+  const isPercentMode = baseParams.rent_mode === 'percent' || 
+    (baseParams.monthly_payout_percent != null && baseParams.monthly_payout_percent > 0);
   
   // TG-Anteil von 0 bis maxBudget
   const tgValues = [];
@@ -47,27 +49,68 @@ function generateCandidatesModeA(baseParams, gridConfig) {
     tgValues.push(tg);
   }
   
-  // Renten-Werte
-  const rentValues = [];
-  for (let rent = rentMin; rent <= rentMax; rent += rentStep) {
-    rentValues.push(Math.round(rent));
-  }
-  
-  // Kombinationen generieren (mit Limit)
-  for (const tg of tgValues) {
-    const etf = maxBudget - tg;
-    if (etf < 0) continue;
+  if (isPercentMode) {
+    // PERCENT-MODUS: Prozentuale Entnahme optimieren
+    const currentPercent = baseParams.monthly_payout_percent || 3.5;
+    const percentMin = Math.max(1.0, currentPercent * (1 - rentRange));
+    const percentMax = Math.min(8.0, currentPercent * (1 + rentRange));
     
-    for (const rent of rentValues) {
-      candidates.push({
-        ...baseParams,
-        monthly_savings: tg,
-        monthly_etf: etf,
-        monthly_payout_net: rent,
-      });
+    // Prozent-Werte generieren
+    const percentValues = [];
+    for (let pct = percentMin; pct <= percentMax; pct += rentStepPercent) {
+      percentValues.push(Math.round(pct * 100) / 100); // Auf 2 Dezimalstellen runden
+    }
+    
+    // Kombinationen generieren
+    for (const tg of tgValues) {
+      const etf = maxBudget - tg;
+      if (etf < 0) continue;
       
-      if (candidates.length >= maxCombinations) {
-        return candidates;
+      for (const pct of percentValues) {
+        candidates.push({
+          ...baseParams,
+          monthly_savings: tg,
+          monthly_etf: etf,
+          monthly_payout_percent: pct,
+          monthly_payout_net: null, // Explizit null setzen für Percent-Modus
+          rent_mode: 'percent',
+        });
+        
+        if (candidates.length >= maxCombinations) {
+          return candidates;
+        }
+      }
+    }
+  } else {
+    // EUR-MODUS: Feste Beträge optimieren
+    const currentRent = baseParams.monthly_payout_net || 1000;
+    const rentMin = Math.max(100, currentRent * (1 - rentRange));
+    const rentMax = currentRent * (1 + rentRange);
+    
+    // Renten-Werte
+    const rentValues = [];
+    for (let rent = rentMin; rent <= rentMax; rent += rentStep) {
+      rentValues.push(Math.round(rent));
+    }
+    
+    // Kombinationen generieren
+    for (const tg of tgValues) {
+      const etf = maxBudget - tg;
+      if (etf < 0) continue;
+      
+      for (const rent of rentValues) {
+        candidates.push({
+          ...baseParams,
+          monthly_savings: tg,
+          monthly_etf: etf,
+          monthly_payout_net: rent,
+          monthly_payout_percent: null, // Explizit null setzen für EUR-Modus
+          rent_mode: 'eur',
+        });
+        
+        if (candidates.length >= maxCombinations) {
+          return candidates;
+        }
       }
     }
   }
@@ -133,10 +176,11 @@ function generateCandidates(baseParams, mode, gridConfig) {
 
 /**
  * Berechnet Score für einen Kandidaten (Modus A)
+ * Unterstützt sowohl EUR-Modus als auch Percent-Modus
  * 
  * Scoring-Logik (dokumentiert):
  * - Harte Bedingung: successRate >= targetSuccess, sonst -Infinity
- * - Hauptziel: Hohe Rente (Gewicht: 10)
+ * - Hauptziel: Hohe Rente (EUR oder Prozent)
  * - Sekundärziel 1: Hohes Median-Endvermögen real (Gewicht: 1/10000)
  * - Sekundärziel 2: Niedriges Ruin-Risiko (Gewicht: -2)
  * 
@@ -151,13 +195,26 @@ function scoreCandidate(candidate, results, targetSuccess = 90) {
     return -Infinity;
   }
   
-  const rentEur = candidate.monthly_payout_net || 0;
   const medianEndReal = results.medianEndReal || 0;
   const ruinProbability = results.ruinProbability || 0;
   
-  // Score-Berechnung (Gewichte dokumentiert)
+  // Score-Berechnung abhängig vom Modus
   let score = 0;
-  score += rentEur * 10;                    // Hauptziel: Rente maximieren
+  
+  const isPercentMode = candidate.rent_mode === 'percent' || 
+    (candidate.monthly_payout_percent != null && candidate.monthly_payout_percent > 0);
+  
+  if (isPercentMode) {
+    // Percent-Modus: Höherer Prozentsatz = besser
+    // Gewicht 1000 um vergleichbar mit EUR-Modus zu sein (3.5% * 1000 = 3500, ähnlich zu 1000€ * 10)
+    const rentPercent = candidate.monthly_payout_percent || 0;
+    score += rentPercent * 1000;
+  } else {
+    // EUR-Modus: Höhere Rente = besser
+    const rentEur = candidate.monthly_payout_net || 0;
+    score += rentEur * 10;
+  }
+  
   score += medianEndReal / 10000;           // Sekundär: Höheres Endvermögen
   score -= ruinProbability * 2;             // Bestrafung: Ruin-Risiko
   
@@ -233,6 +290,8 @@ function runOptimization(baseParams, mcOptions, mode, gridConfig, seedBase) {
         monthly_savings: candidate.monthly_savings,
         monthly_etf: candidate.monthly_etf,
         monthly_payout_net: candidate.monthly_payout_net,
+        monthly_payout_percent: candidate.monthly_payout_percent,
+        rent_mode: candidate.rent_mode,
       }
     });
     
