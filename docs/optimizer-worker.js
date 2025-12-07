@@ -401,47 +401,142 @@ function runOptimization(baseParams, mcOptions, mode, gridConfig, seedBase) {
   return best;
 }
 
+// ============ CHUNK-BASIERTE OPTIMIERUNG (POOL-MODUS) ============
+
+/**
+ * Führt Optimierung für einen Chunk von Kandidaten durch.
+ * Gibt nur den besten Kandidaten des Chunks zurück.
+ * 
+ * @param {Array} candidates - Kandidaten-Array mit globalIdx
+ * @param {Object} mcOptions - MC-Optionen
+ * @param {string} mode - Optimierungsmodus ('A' oder 'B')
+ * @param {Object} gridConfig - Grid-Konfiguration
+ * @param {number} seedBase - Basis-Seed für CRN
+ * @param {number} workerId - Worker-ID für Progress
+ * @param {number} totalCandidates - Gesamtzahl Kandidaten (für Progress)
+ */
+function runChunkOptimization(candidates, mcOptions, mode, gridConfig, seedBase, workerId, totalCandidates) {
+  const targetSuccess = mcOptions.successThreshold 
+    ? 100 - mcOptions.successThreshold
+    : (gridConfig.targetSuccess || 90);
+  const emergencyConfig = buildEmergencyConfig(gridConfig || {});
+  
+  let best = null;
+  let processed = 0;
+  
+  for (const { candidate, globalIdx } of candidates) {
+    // MC-Simulation mit globalem Seed für CRN
+    const results = runMonteCarloForCandidate(candidate, mcOptions, seedBase, globalIdx);
+    
+    // Score berechnen
+    const score = mode === 'B' || mode === 'rent_fix'
+      ? scoreCandidateModeB(candidate, results, targetSuccess, emergencyConfig)
+      : scoreCandidate(candidate, results, targetSuccess, emergencyConfig);
+    
+    processed++;
+    
+    // Progress melden (gedrosselt)
+    if (processed % 5 === 0 || processed === candidates.length) {
+      self.postMessage({
+        type: 'chunk-progress',
+        workerId,
+        processed,
+        chunkSize: candidates.length,
+        totalCandidates
+      });
+    }
+    
+    if (score === -Infinity) continue;
+    
+    // Besten Kandidaten dieses Chunks aktualisieren
+    // Bei Gleichstand: kleinerer globalIdx gewinnt (für Determinismus)
+    if (!best || score > best.score || (score === best.score && globalIdx < best.globalIdx)) {
+      best = {
+        params: candidate,
+        results: {
+          successRate: results.successRate,
+          ruinProbability: results.ruinProbability,
+          medianEnd: results.medianEnd,
+          medianEndReal: results.medianEndReal,
+          capitalPreservationRate: results.capitalPreservationRate,
+          capitalPreservationRateReal: results.capitalPreservationRateReal,
+          retirementMedian: results.retirementMedian,
+          retirementMedianReal: results.retirementMedianReal,
+          p10EndReal: results.p10EndReal,
+          p90EndReal: results.p90EndReal,
+          emergencyFillProbability: results.emergencyFillProbability,
+          emergencyNeverFillProbability: results.emergencyNeverFillProbability,
+          emergencyMedianFillYears: results.emergencyMedianFillYears,
+        },
+        score,
+        globalIdx
+      };
+    }
+  }
+  
+  return { best, processed };
+}
+
 // ============ MESSAGE HANDLER ============
 
 self.onmessage = function(e) {
-  const { type, params, mcOptions, mode, gridConfig, seedBase } = e.data;
-  
-  if (type !== 'start') {
-    self.postMessage({ type: 'error', message: `Unbekannter Nachrichtentyp: ${type}` });
-    return;
-  }
+  const { type } = e.data;
   
   try {
-    // Validierung
-    if (!params) {
-      throw new Error('Keine Parameter übergeben');
+    switch (type) {
+      // Legacy: Vollständige Optimierung (generiert Kandidaten selbst)
+      case 'start': {
+        const { params, mcOptions, mode, gridConfig, seedBase } = e.data;
+        
+        if (!params) {
+          throw new Error('Keine Parameter übergeben');
+        }
+        
+        const seed = seedBase || (mcOptions?.seed ?? Date.now());
+        const best = runOptimization(params, mcOptions || {}, mode || 'A', gridConfig || {}, seed);
+        
+        if (!best) {
+          self.postMessage({
+            type: 'complete',
+            best: null,
+            message: 'Keine gültige Konfiguration gefunden (alle unter Ziel-Erfolgswahrscheinlichkeit)'
+          });
+        } else {
+          self.postMessage({ type: 'complete', best });
+        }
+        break;
+      }
+      
+      // Pool-Modus: Chunk von Kandidaten verarbeiten
+      case 'run-chunk': {
+        const { candidates, mcOptions, mode, gridConfig, seedBase, workerId, totalCandidates } = e.data;
+        
+        if (!candidates || !candidates.length) {
+          throw new Error('Keine Kandidaten übergeben');
+        }
+        
+        const { best, processed } = runChunkOptimization(
+          candidates,
+          mcOptions || {},
+          mode || 'A',
+          gridConfig || {},
+          seedBase,
+          workerId,
+          totalCandidates
+        );
+        
+        self.postMessage({
+          type: 'chunk-complete',
+          workerId,
+          best,
+          processed
+        });
+        break;
+      }
+      
+      default:
+        self.postMessage({ type: 'error', message: `Unbekannter Nachrichtentyp: ${type}` });
     }
-    
-    // Seed bestimmen
-    const seed = seedBase || (mcOptions?.seed ?? Date.now());
-    
-    // Optimierung starten
-    const best = runOptimization(
-      params,
-      mcOptions || {},
-      mode || 'A',
-      gridConfig || {},
-      seed
-    );
-    
-    if (!best) {
-      self.postMessage({
-        type: 'complete',
-        best: null,
-        message: 'Keine gültige Konfiguration gefunden (alle unter Ziel-Erfolgswahrscheinlichkeit)'
-      });
-    } else {
-      self.postMessage({
-        type: 'complete',
-        best
-      });
-    }
-    
   } catch (err) {
     self.postMessage({
       type: 'error',

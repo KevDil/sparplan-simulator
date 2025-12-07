@@ -2749,101 +2749,360 @@ function renderMonteCarloGraph(results) {
     ctx.textBaseline = "middle";
     ctx.fillText("Entnahme →", sx - 6, padY + 20);
   }
-  
   mcGraphState = { results, padX, padY, width, height, maxVal, xDenom };
 }
 
-// ============ MONTE-CARLO WEB WORKER ============
+// ============ MONTE-CARLO WEB WORKER (POOL) ============
 
-let mcWorker = null;
 let mcWorkerRunning = false;
+let mcWorkerPool = [];
+
+// Pool-Konfiguration
+const MC_POOL_CONFIG = {
+  maxWorkers: Math.min(navigator.hardwareConcurrency || 4, 8),
+  minIterationsPerWorker: 100,
+};
 
 /**
- * Initialisiert den MC-Worker
+ * Berechnet die optimale Worker-Anzahl.
+ * HINWEIS: Immer Pool-Modus für konsistentes deterministisches Seeding.
  */
-function initMcWorker() {
-  if (mcWorker) {
-    mcWorker.terminate();
-  }
-  
+function getOptimalWorkerCount(iterations) {
+  const maxByIterations = Math.floor(iterations / MC_POOL_CONFIG.minIterationsPerWorker);
+  return Math.max(1, Math.min(MC_POOL_CONFIG.maxWorkers, maxByIterations));
+}
+
+function initMcWorkerPool(count) {
+  terminateMcWorkerPool();
+  mcWorkerPool = [];
   try {
-    mcWorker = new Worker('mc-worker.js');
+    for (let i = 0; i < count; i++) {
+      mcWorkerPool.push(new Worker('mc-worker.js'));
+    }
     return true;
   } catch (err) {
-    console.warn('MC-Worker konnte nicht initialisiert werden, nutze Fallback:', err);
+    console.warn('MC-Worker-Pool konnte nicht initialisiert werden:', err);
+    terminateMcWorkerPool();
     return false;
   }
 }
 
-/**
- * Führt MC-Simulation im Worker aus
- */
-function runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions) {
+function terminateMcWorkerPool() {
+  for (const worker of mcWorkerPool) worker.terminate();
+  mcWorkerPool = [];
+}
+
+function aggregateMcResults(allRawData, allSamplePaths, params, mcOptions, volatility) {
+  const numSims = allRawData.reduce((sum, d) => sum + d.finalTotals.length, 0);
+  const numMonths = (params.savings_years + params.withdrawal_years) * 12;
+  
+  const finalTotals = allRawData.flatMap(d => d.finalTotals).sort((a, b) => a - b);
+  const finalTotalsReal = allRawData.flatMap(d => d.finalTotalsReal).sort((a, b) => a - b);
+  const finalLossPot = allRawData.flatMap(d => d.finalLossPot).sort((a, b) => a - b);
+  const finalYearlyFreibetrag = allRawData.flatMap(d => d.finalYearlyFreibetrag).sort((a, b) => a - b);
+  const retirementTotals = allRawData.flatMap(d => d.retirementTotals).sort((a, b) => a - b);
+  const retirementTotalsReal = allRawData.flatMap(d => d.retirementTotalsReal).sort((a, b) => a - b);
+  
+  const allSimResults = allRawData.flatMap(d => d.simResults);
+  let successCountStrict = 0, successCountNominal = 0;
+  let totalShortfallCount = 0, ansparShortfallCount = 0, entnahmeShortfallCount = 0;
+  let ruinCount = 0, capitalPreservationCount = 0, capitalPreservationRealCount = 0;
+  const fillMonths = [];
+  const avgMonthlyWithdrawalsNet = [], avgMonthlyWithdrawalsNetReal = [];
+  const avgMonthlyWithdrawalsGross = [], avgMonthlyWithdrawalsGrossReal = [];
+  const totalWithdrawalsNet = [], totalWithdrawalsNetReal = [];
+  const totalWithdrawalsGross = [], totalWithdrawalsGrossReal = [];
+  
+  for (const sim of allSimResults) {
+    if (sim.hasPositiveEnd) successCountNominal++;
+    if (sim.hasPositiveEnd && !sim.hasEntnahmeShortfall) successCountStrict++;
+    if (sim.hasAnsparShortfall || sim.hasEntnahmeShortfall) totalShortfallCount++;
+    if (sim.hasAnsparShortfall) ansparShortfallCount++;
+    if (sim.hasEntnahmeShortfall) entnahmeShortfallCount++;
+    if (sim.isRuin) ruinCount++;
+    if (sim.capitalPreserved) capitalPreservationCount++;
+    if (sim.capitalPreservedReal) capitalPreservationRealCount++;
+    if (sim.firstFillMonth !== null) fillMonths.push(sim.firstFillMonth);
+    if (sim.avgWithdrawalNet > 0) {
+      avgMonthlyWithdrawalsNet.push(sim.avgWithdrawalNet);
+      avgMonthlyWithdrawalsNetReal.push(sim.avgWithdrawalNetReal);
+      avgMonthlyWithdrawalsGross.push(sim.avgWithdrawalGross);
+      avgMonthlyWithdrawalsGrossReal.push(sim.avgWithdrawalGrossReal);
+      totalWithdrawalsNet.push(sim.totalWithdrawalNet);
+      totalWithdrawalsNetReal.push(sim.totalWithdrawalNetReal);
+      totalWithdrawalsGross.push(sim.totalWithdrawalGross);
+      totalWithdrawalsGrossReal.push(sim.totalWithdrawalGrossReal);
+    }
+  }
+  
+  avgMonthlyWithdrawalsNet.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsNetReal.sort((a, b) => a - b);
+  totalWithdrawalsNet.sort((a, b) => a - b);
+  totalWithdrawalsNetReal.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGross.sort((a, b) => a - b);
+  avgMonthlyWithdrawalsGrossReal.sort((a, b) => a - b);
+  totalWithdrawalsGross.sort((a, b) => a - b);
+  totalWithdrawalsGrossReal.sort((a, b) => a - b);
+  fillMonths.sort((a, b) => a - b);
+  
+  const allSorrData = allRawData.flatMap(d => d.sorrData);
+  const sorr = aggregateSorrData(allSorrData, params);
+  
+  const percentiles = { p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: [] };
+  const percentilesReal = { p5: [], p10: [], p25: [], p50: [], p75: [], p90: [], p95: [] };
+  const sampleHistories = allSamplePaths.flat().slice(0, 50);
+  
+  // KORRIGIERT: Perzentile aus ALLEN Pfaden berechnen (monthlyTotals), nicht nur Samples
+  // monthlyTotals ist Array of Arrays: [workerData][month][iteration]
+  // Wir müssen alle Worker-Daten pro Monat zusammenführen
+  const hasMonthlyData = allRawData.length > 0 && allRawData[0].monthlyTotals && allRawData[0].monthlyTotals.length > 0;
+  
+  if (hasMonthlyData) {
+    for (let month = 0; month < numMonths; month++) {
+      // Sammle alle Werte für diesen Monat von allen Workern
+      const monthTotals = [];
+      const monthTotalsReal = [];
+      for (const workerData of allRawData) {
+        if (workerData.monthlyTotals[month]) {
+          monthTotals.push(...workerData.monthlyTotals[month]);
+        }
+        if (workerData.monthlyTotalsReal[month]) {
+          monthTotalsReal.push(...workerData.monthlyTotalsReal[month]);
+        }
+      }
+      monthTotals.sort((a, b) => a - b);
+      monthTotalsReal.sort((a, b) => a - b);
+      
+      percentiles.p5.push(percentile(monthTotals, 5));
+      percentiles.p10.push(percentile(monthTotals, 10));
+      percentiles.p25.push(percentile(monthTotals, 25));
+      percentiles.p50.push(percentile(monthTotals, 50));
+      percentiles.p75.push(percentile(monthTotals, 75));
+      percentiles.p90.push(percentile(monthTotals, 90));
+      percentiles.p95.push(percentile(monthTotals, 95));
+      percentilesReal.p5.push(percentile(monthTotalsReal, 5));
+      percentilesReal.p10.push(percentile(monthTotalsReal, 10));
+      percentilesReal.p25.push(percentile(monthTotalsReal, 25));
+      percentilesReal.p50.push(percentile(monthTotalsReal, 50));
+      percentilesReal.p75.push(percentile(monthTotalsReal, 75));
+      percentilesReal.p90.push(percentile(monthTotalsReal, 90));
+      percentilesReal.p95.push(percentile(monthTotalsReal, 95));
+    }
+  } else if (sampleHistories.length > 0) {
+    // Fallback auf Samples wenn keine Per-Monat-Daten vorhanden (Legacy-Kompatibilität)
+    console.warn('Perzentile basieren nur auf Samples - Legacy-Modus');
+    for (let month = 0; month < numMonths; month++) {
+      const monthTotals = sampleHistories.map(h => h[month]?.total || 0).sort((a, b) => a - b);
+      const monthTotalsReal = sampleHistories.map(h => h[month]?.total_real || 0).sort((a, b) => a - b);
+      percentiles.p5.push(percentile(monthTotals, 5));
+      percentiles.p10.push(percentile(monthTotals, 10));
+      percentiles.p25.push(percentile(monthTotals, 25));
+      percentiles.p50.push(percentile(monthTotals, 50));
+      percentiles.p75.push(percentile(monthTotals, 75));
+      percentiles.p90.push(percentile(monthTotals, 90));
+      percentiles.p95.push(percentile(monthTotals, 95));
+      percentilesReal.p5.push(percentile(monthTotalsReal, 5));
+      percentilesReal.p10.push(percentile(monthTotalsReal, 10));
+      percentilesReal.p25.push(percentile(monthTotalsReal, 25));
+      percentilesReal.p50.push(percentile(monthTotalsReal, 50));
+      percentilesReal.p75.push(percentile(monthTotalsReal, 75));
+      percentilesReal.p90.push(percentile(monthTotalsReal, 90));
+      percentilesReal.p95.push(percentile(monthTotalsReal, 95));
+    }
+  }
+  
+  const months = sampleHistories[0]?.map(h => h.month) || Array.from({ length: numMonths }, (_, i) => i + 1);
+  const inflationRatePa = params.inflation_rate_pa || 2;
+  const cumulativeInflation = Math.pow(1 + inflationRatePa / 100, numMonths / 12);
+  const purchasingPowerLoss = (1 - 1 / cumulativeInflation) * 100;
+  const emergencyFillProbability = numSims > 0 ? (fillMonths.length / numSims) * 100 : 0;
+  const emergencyNeverFillProbability = Math.max(0, 100 - emergencyFillProbability);
+  const emergencyMedianFillMonths = fillMonths.length ? percentile(fillMonths, 50) : null;
+  const emergencyMedianFillYears = emergencyMedianFillMonths != null ? emergencyMedianFillMonths / 12 : null;
+  
+  return {
+    iterations: numSims,
+    successRate: (successCountStrict / numSims) * 100,
+    successRateNominal: (successCountNominal / numSims) * 100,
+    shortfallRate: (totalShortfallCount / numSims) * 100,
+    ansparShortfallRate: (ansparShortfallCount / numSims) * 100,
+    entnahmeShortfallRate: (entnahmeShortfallCount / numSims) * 100,
+    percentiles, percentilesReal, months,
+    medianEnd: percentile(finalTotals, 50),
+    p10End: percentile(finalTotals, 10),
+    p90End: percentile(finalTotals, 90),
+    p5End: percentile(finalTotals, 5),
+    p25End: percentile(finalTotals, 25),
+    p75End: percentile(finalTotals, 75),
+    p95End: percentile(finalTotals, 95),
+    savingsYears: params.savings_years,
+    retirementMedian: percentile(retirementTotals, 50),
+    capitalPreservationRate: (capitalPreservationCount / numSims) * 100,
+    capitalPreservationRateReal: (capitalPreservationRealCount / numSims) * 100,
+    ruinProbability: (ruinCount / numSims) * 100,
+    meanEnd: finalTotals.reduce((a, b) => a + b, 0) / numSims,
+    medianEndReal: percentile(finalTotalsReal, 50),
+    p10EndReal: percentile(finalTotalsReal, 10),
+    p90EndReal: percentile(finalTotalsReal, 90),
+    p5EndReal: percentile(finalTotalsReal, 5),
+    p25EndReal: percentile(finalTotalsReal, 25),
+    p75EndReal: percentile(finalTotalsReal, 75),
+    p95EndReal: percentile(finalTotalsReal, 95),
+    meanEndReal: finalTotalsReal.reduce((a, b) => a + b, 0) / numSims,
+    retirementMedianReal: percentile(retirementTotalsReal, 50),
+    medianFinalLossPot: percentile(finalLossPot, 50),
+    medianFinalYearlyFreibetrag: percentile(finalYearlyFreibetrag, 50),
+    medianAvgMonthlyWithdrawal: percentile(avgMonthlyWithdrawalsNet, 50),
+    medianAvgMonthlyWithdrawalReal: percentile(avgMonthlyWithdrawalsNetReal, 50),
+    medianTotalWithdrawals: percentile(totalWithdrawalsNet, 50),
+    medianTotalWithdrawalsReal: percentile(totalWithdrawalsNetReal, 50),
+    medianAvgMonthlyWithdrawalNet: percentile(avgMonthlyWithdrawalsNet, 50),
+    medianAvgMonthlyWithdrawalNetReal: percentile(avgMonthlyWithdrawalsNetReal, 50),
+    medianTotalWithdrawalsNet: percentile(totalWithdrawalsNet, 50),
+    medianTotalWithdrawalsNetReal: percentile(totalWithdrawalsNetReal, 50),
+    medianAvgMonthlyWithdrawalGross: percentile(avgMonthlyWithdrawalsGross, 50),
+    medianAvgMonthlyWithdrawalGrossReal: percentile(avgMonthlyWithdrawalsGrossReal, 50),
+    medianTotalWithdrawalsGross: percentile(totalWithdrawalsGross, 50),
+    medianTotalWithdrawalsGrossReal: percentile(totalWithdrawalsGrossReal, 50),
+    purchasingPowerLoss, realReturnPa: 0, sorr, mcOptions, volatility,
+    emergencyFillProbability, emergencyNeverFillProbability, emergencyMedianFillYears,
+    allHistories: sampleHistories,
+    workerCount: mcWorkerPool.length || 1,
+    poolMode: mcWorkerPool.length > 1,
+  };
+}
+
+function aggregateSorrData(allSorrData, params) {
+  const numSims = allSorrData.length;
+  if (params.withdrawal_years === 0 || numSims < 10) {
+    return { sorRiskScore: 0, earlyBadImpact: 0, earlyGoodImpact: 0, correlationEarlyReturns: 0,
+      worstSequenceEnd: 0, bestSequenceEnd: 0, medianSequenceEnd: 0, vulnerabilityWindow: 0 };
+  }
+  allSorrData.sort((a, b) => a.earlyReturn - b.earlyReturn);
+  const quintileSize = Math.floor(numSims / 5);
+  const worstEarlyQuintile = allSorrData.slice(0, quintileSize);
+  const bestEarlyQuintile = allSorrData.slice(-quintileSize);
+  const middleQuintiles = allSorrData.slice(quintileSize * 2, quintileSize * 3);
+  const avgWorst = worstEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / worstEarlyQuintile.length;
+  const avgBest = bestEarlyQuintile.reduce((s, d) => s + d.endWealth, 0) / bestEarlyQuintile.length;
+  const avgMiddle = middleQuintiles.reduce((s, d) => s + d.endWealth, 0) / middleQuintiles.length;
+  const meanEarlyReturn = allSorrData.reduce((s, d) => s + d.earlyReturn, 0) / numSims;
+  const meanEndWealth = allSorrData.reduce((s, d) => s + d.endWealth, 0) / numSims;
+  let numerator = 0, denomEarly = 0, denomEnd = 0;
+  for (const d of allSorrData) {
+    const diffEarly = d.earlyReturn - meanEarlyReturn;
+    const diffEnd = d.endWealth - meanEndWealth;
+    numerator += diffEarly * diffEnd;
+    denomEarly += diffEarly * diffEarly;
+    denomEnd += diffEnd * diffEnd;
+  }
+  const correlation = (denomEarly > 0 && denomEnd > 0) ? numerator / Math.sqrt(denomEarly * denomEnd) : 0;
+  const avgStartWealth = allSorrData.reduce((s, d) => s + d.startWealth, 0) / numSims;
+  const sorRiskScore = avgStartWealth > 0 ? ((avgBest - avgWorst) / avgStartWealth) * 100 : 0;
+  const earlyBadImpact = avgMiddle > 0 ? ((avgWorst - avgMiddle) / avgMiddle) * 100 : 0;
+  const earlyGoodImpact = avgMiddle > 0 ? ((avgBest - avgMiddle) / avgMiddle) * 100 : 0;
+  return { sorRiskScore: Math.abs(sorRiskScore), earlyBadImpact, earlyGoodImpact,
+    correlationEarlyReturns: correlation, worstSequenceEnd: avgWorst,
+    bestSequenceEnd: avgBest, medianSequenceEnd: avgMiddle,
+    vulnerabilityWindow: Math.min(5, params.withdrawal_years) };
+}
+
+function runMonteCarloWithPool(params, iterations, volatility, showIndividual, mcOptions) {
   return new Promise((resolve, reject) => {
-    if (!initMcWorker()) {
-      // Fallback auf synchrone Simulation
-      console.warn('Fallback auf Main-Thread Monte-Carlo');
-      runMonteCarloSimulation(params, iterations, volatility, showIndividual, mcOptions)
-        .then(resolve)
-        .catch(reject);
+    const workerCount = getOptimalWorkerCount(iterations);
+    
+    // KORRIGIERT: Auch bei workerCount === 1 den Pool-Modus (run-chunk) nutzen,
+    // damit identische Ergebnisse wie bei mehreren Workern (deterministisches Seeding).
+    // Der Legacy-'start'-Modus hat ein anderes Seeding-Schema und liefert abweichende Ergebnisse.
+    
+    if (!initMcWorkerPool(workerCount)) {
+      console.error('Worker-Pool konnte nicht initialisiert werden');
+      reject(new Error('Web Worker werden nicht unterstützt oder konnten nicht gestartet werden.'));
       return;
     }
     
     mcWorkerRunning = true;
+    mcProgressTextEl.textContent = `Starte ${workerCount} Worker...`;
     
-    mcWorker.onmessage = function(e) {
-      const { type, current, total, percent, results, message } = e.data;
+    const iterationsPerWorker = Math.floor(iterations / workerCount);
+    const remainder = iterations % workerCount;
+    const baseSeed = mcOptions.seed || Date.now();
+    const allRawData = [];
+    const allSamplePaths = [];
+    const workerProgress = new Array(workerCount).fill(0);
+    let completedWorkers = 0;
+    let hasError = false;
+    
+    let currentStartIdx = 0;
+    for (let i = 0; i < workerCount; i++) {
+      const worker = mcWorkerPool[i];
+      const count = iterationsPerWorker + (i < remainder ? 1 : 0);
       
-      switch (type) {
-        case 'progress':
-          mcProgressEl.value = percent;
-          mcProgressTextEl.textContent = `${current} / ${total} (${percent}%)`;
-          break;
-          
-        case 'complete':
+      worker.onmessage = function(e) {
+        if (hasError) return;
+        const { type, workerId, completedInChunk, rawData, samplePaths, message } = e.data;
+        switch (type) {
+          case 'chunk-progress':
+            // KORRIGIERT: Tracke fertige Pfade pro Worker, nicht globalen Index
+            workerProgress[workerId] = completedInChunk;
+            const totalProgress = workerProgress.reduce((a, b) => a + b, 0);
+            const pct = Math.round((totalProgress / iterations) * 100);
+            mcProgressEl.value = pct;
+            mcProgressTextEl.textContent = `${totalProgress} / ${iterations} (${pct}%) - ${workerCount} Worker`;
+            break;
+          case 'chunk-complete':
+            allRawData.push(rawData);
+            allSamplePaths.push(samplePaths);
+            completedWorkers++;
+            if (completedWorkers === workerCount) {
+              mcWorkerRunning = false;
+              terminateMcWorkerPool();
+              mcProgressTextEl.textContent = "Aggregiere Ergebnisse...";
+              const results = aggregateMcResults(allRawData, allSamplePaths, params, mcOptions, volatility);
+              results.showIndividual = showIndividual;
+              lastMcResults = results;
+              renderMonteCarloStats(results);
+              renderMonteCarloGraph(results);
+              mcProgressTextEl.textContent = `Fertig! (${workerCount} Worker)`;
+              resolve(results);
+            }
+            break;
+          case 'error':
+            if (!hasError) {
+              hasError = true;
+              mcWorkerRunning = false;
+              terminateMcWorkerPool();
+              reject(new Error(message));
+            }
+            break;
+        }
+      };
+      worker.onerror = function(err) {
+        if (!hasError) {
+          hasError = true;
           mcWorkerRunning = false;
-          
-          // Ergebnisse verarbeiten
-          results.showIndividual = showIndividual;
-          lastMcResults = results;
-          
-          // UI aktualisieren
-          renderMonteCarloStats(results);
-          renderMonteCarloGraph(results);
-          
-          mcProgressTextEl.textContent = "Fertig!";
-          resolve(results);
-          break;
-          
-        case 'error':
-          mcWorkerRunning = false;
-          reject(new Error(message));
-          break;
-      }
-    };
-    
-    mcWorker.onerror = function(err) {
-      mcWorkerRunning = false;
-      reject(new Error(err.message || 'Worker-Fehler'));
-    };
-    
-    // Worker starten
-    mcWorker.postMessage({
-      type: 'start',
-      params,
-      iterations,
-      volatility,
-      mcOptions
-    });
+          terminateMcWorkerPool();
+          reject(new Error(err.message || 'Worker-Fehler'));
+        }
+      };
+      worker.postMessage({
+        type: 'run-chunk', params, volatility, mcOptions,
+        startIdx: currentStartIdx, count, totalIterations: iterations,
+        workerId: i, baseSeed
+      });
+      currentStartIdx += count;
+    }
   });
+}
+
+function runMonteCarloWithWorker(params, iterations, volatility, showIndividual, mcOptions) {
+  return runMonteCarloWithPool(params, iterations, volatility, showIndividual, mcOptions);
 }
 
 // Monte-Carlo Button Event Handler (mit Web Worker)
 document.getElementById("btn-monte-carlo")?.addEventListener("click", async () => {
   try {
     messageEl.textContent = "";
-    
-    // Parameter aus Formular lesen (nutze gemeinsame Funktion falls verfügbar)
     const params = typeof readParamsFromForm === 'function' 
       ? readParamsFromForm() 
       : (() => {
@@ -2851,7 +3110,6 @@ document.getElementById("btn-monte-carlo")?.addEventListener("click", async () =
           const inflationAdjust = document.getElementById("inflation_adjust_withdrawal")?.checked ?? true;
           const inflationAdjustSpecialSavings = document.getElementById("inflation_adjust_special_savings")?.checked ?? true;
           const inflationAdjustSpecialWithdrawal = document.getElementById("inflation_adjust_special_withdrawal")?.checked ?? true;
-          
           return {
             start_savings: readNumber("start_savings", { min: 0 }),
             start_etf: readNumber("start_etf", { min: 0 }),
