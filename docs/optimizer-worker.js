@@ -18,6 +18,10 @@ importScripts('simulation-core.js');
 const DEFAULT_ITERATIONS = 1000; // Iterationen für Optimierung (Balance: Speed vs. Genauigkeit)
 const MAX_ITERATIONS_OPTIMIZE = 2000; // Hartes Limit für Optimierung
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 // ============ GRID-GENERIERUNG ============
 
 /**
@@ -172,6 +176,56 @@ function generateCandidates(baseParams, mode, gridConfig) {
   }
 }
 
+function buildEmergencyConfig(gridConfig = {}) {
+  return {
+    weight: gridConfig.emergencyWeight ?? 4000,
+    maxFillYears: gridConfig.emergencyMaxYears ?? 10,
+    minFillProbability: gridConfig.minFillProbability ?? 0,
+    hardMinFill: gridConfig.hardMinFill ?? false,
+    minFillPenalty: gridConfig.minFillPenalty ?? 1e6,
+  };
+}
+
+function evaluateEmergency(candidate, results, emergencyConfig) {
+  const target = candidate.savings_target ?? 0;
+  const hasEmergencyGoal = target > 0;
+  const fillProb = results.emergencyFillProbability ?? 0;
+  const medianFillYears = results.emergencyMedianFillYears;
+  const weight = emergencyConfig?.weight ?? 4000;
+  const maxYears = emergencyConfig?.maxFillYears ?? 10;
+  const minFillProb = emergencyConfig?.minFillProbability ?? 0;
+  const minFillPenalty = emergencyConfig?.minFillPenalty ?? 1e6;
+  const hardMinFill = emergencyConfig?.hardMinFill ?? false;
+
+  if (hasEmergencyGoal && fillProb === 0) {
+    return { disqualify: true, contribution: -Infinity, fillProb, medianFillYears };
+  }
+
+  let penalty = 0;
+  if (hasEmergencyGoal && minFillProb > 0 && fillProb < minFillProb) {
+    if (hardMinFill) {
+      return { disqualify: true, contribution: -Infinity, fillProb, medianFillYears };
+    }
+    penalty = minFillPenalty;
+  }
+
+  const probFactor = hasEmergencyGoal ? clamp(fillProb / 100, 0, 1) : 1;
+  let tNorm = 1;
+
+  if (hasEmergencyGoal) {
+    if (medianFillYears == null) {
+      tNorm = 0;
+    } else {
+      tNorm = clamp((maxYears - medianFillYears) / maxYears, 0, 1);
+    }
+  }
+
+  const quality = 0.6 * probFactor + 0.4 * tNorm;
+  const contribution = quality * weight - penalty;
+
+  return { disqualify: false, contribution, fillProb, medianFillYears, quality };
+}
+
 // ============ SCORING ============
 
 /**
@@ -189,9 +243,14 @@ function generateCandidates(baseParams, mode, gridConfig) {
  * @param {number} targetSuccess - Ziel-Erfolgswahrscheinlichkeit (%)
  * @returns {number} Score
  */
-function scoreCandidate(candidate, results, targetSuccess = 90) {
+function scoreCandidate(candidate, results, targetSuccess = 90, emergencyConfig) {
   // Harte Bedingung
   if (results.successRate < targetSuccess) {
+    return -Infinity;
+  }
+
+  const emergencyEval = evaluateEmergency(candidate, results, emergencyConfig);
+  if (emergencyEval.disqualify) {
     return -Infinity;
   }
   
@@ -217,6 +276,7 @@ function scoreCandidate(candidate, results, targetSuccess = 90) {
   
   score += medianEndReal / 10000;           // Sekundär: Höheres Endvermögen
   score -= ruinProbability * 2;             // Bestrafung: Ruin-Risiko
+  score += emergencyEval.contribution;      // Notgroschen-Priorisierung
   
   return score;
 }
@@ -224,8 +284,13 @@ function scoreCandidate(candidate, results, targetSuccess = 90) {
 /**
  * Berechnet Score für Modus B (Sparrate minimieren)
  */
-function scoreCandidateModeB(candidate, results, targetSuccess = 90) {
+function scoreCandidateModeB(candidate, results, targetSuccess = 90, emergencyConfig) {
   if (results.successRate < targetSuccess) {
+    return -Infinity;
+  }
+
+  const emergencyEval = evaluateEmergency(candidate, results, emergencyConfig);
+  if (emergencyEval.disqualify) {
     return -Infinity;
   }
   
@@ -238,6 +303,7 @@ function scoreCandidateModeB(candidate, results, targetSuccess = 90) {
   score -= totalBudget * 10;                // Hauptziel: Budget minimieren
   score += medianEndReal / 10000;           // Sekundär: Höheres Endvermögen
   score -= ruinProbability * 2;             // Bestrafung: Ruin-Risiko
+  score += emergencyEval.contribution;      // Notgroschen-Priorisierung
   
   return score;
 }
@@ -273,6 +339,7 @@ function runOptimization(baseParams, mcOptions, mode, gridConfig, seedBase) {
   const targetSuccess = mcOptions.successThreshold 
     ? 100 - mcOptions.successThreshold // Umrechnung falls Threshold angegeben
     : (gridConfig.targetSuccess || 90);
+  const emergencyConfig = buildEmergencyConfig(gridConfig || {});
   
   let best = null;
   const total = candidates.length;
@@ -300,8 +367,12 @@ function runOptimization(baseParams, mcOptions, mode, gridConfig, seedBase) {
     
     // Score berechnen
     const score = mode === 'B' || mode === 'rent_fix'
-      ? scoreCandidateModeB(candidate, results, targetSuccess)
-      : scoreCandidate(candidate, results, targetSuccess);
+      ? scoreCandidateModeB(candidate, results, targetSuccess, emergencyConfig)
+      : scoreCandidate(candidate, results, targetSuccess, emergencyConfig);
+
+    if (score === -Infinity) {
+      continue;
+    }
     
     // Besten Kandidaten aktualisieren
     if (!best || score > best.score) {
@@ -318,6 +389,9 @@ function runOptimization(baseParams, mcOptions, mode, gridConfig, seedBase) {
           retirementMedianReal: results.retirementMedianReal,
           p10EndReal: results.p10EndReal,
           p90EndReal: results.p90EndReal,
+          emergencyFillProbability: results.emergencyFillProbability,
+          emergencyNeverFillProbability: results.emergencyNeverFillProbability,
+          emergencyMedianFillYears: results.emergencyMedianFillYears,
         },
         score
       };

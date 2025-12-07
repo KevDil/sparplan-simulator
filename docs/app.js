@@ -44,6 +44,7 @@ const Y_AXIS_STEPS = 5;
 const STORAGE_KEY = "etf_simulator_params";
 
 const nf0 = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const nf2 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const form = document.getElementById("sim-form");
@@ -337,6 +338,8 @@ function exportMonteCarloToCsv(results, params = lastParams) {
     ["Kapitalerhalt-Rate (nominal)", `${results.capitalPreservationRate.toFixed(1)}%`],
     ["Kapitalerhalt-Rate (real/inflationsbereinigt)", `${results.capitalPreservationRateReal.toFixed(1)}%`],
     [`Pleite-Risiko (Entnahmephase: <${ruinThreshold}% Rentenbeginn-Vermögen oder Shortfall)`, `${results.ruinProbability.toFixed(1)}%`],
+    ["Notgroschen wird gefüllt (Monte-Carlo)", `${(results.emergencyFillProbability ?? 0).toFixed(1)}%`],
+    ["Zeit bis Notgroschen voll (Median, Jahre)", results.emergencyMedianFillYears != null ? results.emergencyMedianFillYears.toFixed(2) : "nie/kein Ziel"],
     [],
     ["=== ENDVERMÖGEN NOMINAL ===", ""],
     ["Endvermögen (Median)", results.medianEnd.toFixed(2)],
@@ -748,6 +751,8 @@ async function exportMonteCarloToPdf(results, params = lastParams) {
       ["Kapitalerhalt-Rate", `${results.capitalPreservationRate.toFixed(1)}%`],
       ["Pleite-Risiko (Pfad)", `${results.ruinProbability.toFixed(1)}%`],
       ["Vermögen bei Rentenbeginn", formatCurrency(results.retirementMedian)],
+      ["Notgroschen gefüllt", `${(results.emergencyFillProbability ?? 0).toFixed(1)}%`],
+      ["Zeit bis TG-Ziel", results.emergencyMedianFillYears != null ? `${nf1.format(results.emergencyMedianFillYears)} Jahre` : "nie/kein Ziel"],
     ];
     
     const leftX = margin;
@@ -2327,6 +2332,32 @@ function renderMonteCarloStats(results) {
   } else if (results.capitalPreservationRate >= 25) {
     preserveEl.classList.add("stat-value--warning");
   }
+
+  // Notgroschen-Kennzahlen
+  const emergencyProbEl = document.getElementById("mc-emergency-fill-prob");
+  const emergencyYearsEl = document.getElementById("mc-emergency-fill-years");
+  const emergencyFillProb = results.emergencyFillProbability ?? 0;
+  const emergencyMedianYears = results.emergencyMedianFillYears;
+
+  if (emergencyProbEl) {
+    emergencyProbEl.textContent = `${emergencyFillProb.toFixed(1)}%`;
+    emergencyProbEl.classList.remove("stat-value--success", "stat-value--warning", "stat-value--danger");
+    if (emergencyFillProb >= 90) {
+      emergencyProbEl.classList.add("stat-value--success");
+    } else if (emergencyFillProb >= 60) {
+      emergencyProbEl.classList.add("stat-value--warning");
+    } else {
+      emergencyProbEl.classList.add("stat-value--danger");
+    }
+  }
+
+  if (emergencyYearsEl) {
+    if (emergencyMedianYears == null || !Number.isFinite(emergencyMedianYears)) {
+      emergencyYearsEl.textContent = emergencyFillProb === 0 ? "nie" : "–";
+    } else {
+      emergencyYearsEl.textContent = `${nf1.format(emergencyMedianYears)} Jahre`;
+    }
+  }
   
   // Farbige Erfolgsrate (für neue Highlight-Karte)
   successEl.classList.remove("success-high", "success-medium", "success-low");
@@ -3350,6 +3381,14 @@ function renderOptimizationResult(best) {
   setStat('opt-retirement-median', formatCurrency(results.retirementMedian || 0));
   setStat('opt-capital-preservation', `${(results.capitalPreservationRateReal || 0).toFixed(1)}%`);
   setStat('opt-range-end', `${formatCurrency(results.p10EndReal || 0)} - ${formatCurrency(results.p90EndReal || 0)}`);
+  const emergencyProb = results.emergencyFillProbability;
+  const emergencyYears = results.emergencyMedianFillYears;
+  const emergencyProbText = emergencyProb != null ? `${emergencyProb.toFixed(1)}%` : '-';
+  const emergencyYearsText = emergencyYears != null && Number.isFinite(emergencyYears)
+    ? `${nf1.format(emergencyYears)} Jahre`
+    : (emergencyProb === 0 ? 'nie' : '-');
+  setStat('opt-emergency-fill-prob', emergencyProbText);
+  setStat('opt-emergency-fill-years', emergencyYearsText);
   
   // Erfolgsrate Farbe
   const successEl = document.getElementById('opt-success-rate');
@@ -3361,6 +3400,18 @@ function renderOptimizationResult(best) {
       successEl.classList.add('success-medium');
     } else {
       successEl.classList.add('success-low');
+    }
+  }
+
+  const emergencyProbEl = document.getElementById('opt-emergency-fill-prob');
+  if (emergencyProbEl && emergencyProb != null) {
+    emergencyProbEl.classList.remove('stat-value--success', 'stat-value--warning', 'stat-value--danger');
+    if (emergencyProb >= 90) {
+      emergencyProbEl.classList.add('stat-value--success');
+    } else if (emergencyProb >= 60) {
+      emergencyProbEl.classList.add('stat-value--warning');
+    } else {
+      emergencyProbEl.classList.add('stat-value--danger');
     }
   }
 }

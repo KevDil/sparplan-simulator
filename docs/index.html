@@ -870,6 +870,22 @@
             </div>
           </div>
 
+          <div class="mc-stats-section">
+            <h4 class="mc-stats-title">Notgroschen (Monte-Carlo)</h4>
+            <div class="stats-grid stats-grid--mc">
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Wird gefüllt</span>
+                <span class="stat-value" id="mc-emergency-fill-prob">-</span>
+                <small class="stat-hint">Anteil der Pfade mit erreichtem TG-Ziel</small>
+              </div>
+              <div class="stat-card stat-card--mc">
+                <span class="stat-label">Zeit bis voll</span>
+                <span class="stat-value" id="mc-emergency-fill-years">-</span>
+                <small class="stat-hint">Median über Pfade, in denen er gefüllt wird</small>
+              </div>
+            </div>
+          </div>
+
           <!-- Sequence-of-Returns Risk -->
           <div class="mc-stats-section">
             <h4 class="mc-stats-title mc-stats-title--sorr">
@@ -989,6 +1005,14 @@
                 <div class="stat-card stat-card--mc">
                   <span class="stat-label">Spanne (10%-90%)</span>
                   <span class="stat-value" id="opt-range-end">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Notgroschen gefüllt</span>
+                  <span class="stat-value" id="opt-emergency-fill-prob">-</span>
+                </div>
+                <div class="stat-card stat-card--mc">
+                  <span class="stat-label">Zeit bis Notgroschen voll</span>
+                  <span class="stat-value" id="opt-emergency-fill-years">-</span>
                 </div>
               </div>
             </div>

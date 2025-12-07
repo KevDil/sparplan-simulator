@@ -844,6 +844,7 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   const numMonths = allHistories[0]?.length || 0;
   const numSims = allHistories.length;
   const savingsMonths = params.savings_years * MONTHS_PER_YEAR;
+  const savingsTarget = params.savings_target ?? 0;
   
   const SUCCESS_THRESHOLD_REAL = mcOptions.successThreshold ?? 100;
   const RUIN_THRESHOLD_PERCENT = (mcOptions.ruinThresholdPercent ?? 10) / 100;
@@ -860,6 +861,9 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   const SHORTFALL_TOLERANCE_PERCENT = 0.01;
   const SHORTFALL_TOLERANCE_ABS = 50;
   
+  const fillMonths = [];
+  let neverFillCount = 0;
+  
   let successCountStrict = 0;
   let successCountNominal = 0;
   let totalShortfallCount = 0;
@@ -872,6 +876,23 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
     const endInflation = lastRow?.cumulative_inflation || 1;
     const successThresholdNominal = SUCCESS_THRESHOLD_REAL * endInflation;
     const hasPositiveEnd = endWealth > successThresholdNominal;
+    
+    let firstFillMonth = null;
+    if (savingsTarget <= 0) {
+      firstFillMonth = 0;
+    } else {
+      for (let m = 0; m < Math.min(numMonths, history.length); m++) {
+        if ((history[m]?.savings || 0) >= savingsTarget) {
+          firstFillMonth = history[m]?.month ?? (m + 1);
+          break;
+        }
+      }
+    }
+    if (firstFillMonth === null) {
+      neverFillCount++;
+    } else {
+      fillMonths.push(firstFillMonth);
+    }
     
     let hasAnsparShortfall = false;
     let hasEntnahmeShortfall = false;
@@ -1039,6 +1060,13 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   }
   
   const months = allHistories[0]?.map(h => h.month) || [];
+  fillMonths.sort((a, b) => a - b);
+  const emergencyFillProbability = numSims > 0 ? (fillMonths.length / numSims) * 100 : 0;
+  const emergencyNeverFillProbability = Math.max(0, 100 - emergencyFillProbability);
+  const emergencyMedianFillMonths = fillMonths.length ? percentile(fillMonths, 50) : null;
+  const emergencyMedianFillYears = emergencyMedianFillMonths != null
+    ? emergencyMedianFillMonths / MONTHS_PER_YEAR
+    : null;
   
   return {
     iterations: numSims,
@@ -1094,6 +1122,9 @@ function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
     realReturnPa: 0, // Vereinfacht - wird im UI berechnet falls benötigt
     sorr,
     mcOptions,
+    emergencyFillProbability,
+    emergencyNeverFillProbability,
+    emergencyMedianFillYears,
   };
 }
 
