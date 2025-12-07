@@ -42,6 +42,7 @@
 const SPARERPAUSCHBETRAG_VERHEIRATET = 2000; // Nicht in simulation-core.js
 const Y_AXIS_STEPS = 5;
 const STORAGE_KEY = "etf_simulator_params";
+const THEME_STORAGE_KEY = "etf_simulator_theme";
 
 const nf0 = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -52,6 +53,7 @@ const graphCanvas = document.getElementById("graph");
 const tooltip = document.getElementById("tooltip");
 const messageEl = document.getElementById("message");
 const tableBody = document.querySelector("#year-table tbody");
+const themeToggleBtn = document.getElementById("btn-theme-toggle");
 
 let graphState = null;
 let lastHistory = [];
@@ -97,6 +99,38 @@ function loadFromStorage() {
     return data ? JSON.parse(data) : null;
   } catch (e) {
     return null;
+  }
+}
+
+function applyTheme(theme) {
+  const body = document.body;
+  if (!body) return;
+  if (theme === "light") {
+    body.classList.add("theme-light");
+  } else {
+    body.classList.remove("theme-light");
+  }
+}
+
+function initThemeFromStorage() {
+  let storedTheme = null;
+  try {
+    storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (e) {
+    storedTheme = null;
+  }
+
+  applyTheme(storedTheme === "light" ? "light" : "dark");
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", () => {
+      const isLight = document.body.classList.contains("theme-light");
+      const nextTheme = isLight ? "dark" : "light";
+      applyTheme(nextTheme);
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch (e) { /* ignore */ }
+    });
   }
 }
 
@@ -3886,3 +3920,6 @@ document.getElementById('btn-apply-and-run')?.addEventListener('click', async ()
     document.getElementById('btn-monte-carlo')?.click();
   }
 });
+
+// Theme initialisieren (nachdem DOM-Elemente vorhanden sind)
+initThemeFromStorage();
