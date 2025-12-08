@@ -1,5 +1,18 @@
 /**
- * ETF Sparplan Simulator - Steuermodell und Vereinfachungen
+ * @deprecated Diese Datei wird nicht mehr verwendet!
+ * 
+ * Version 2.0 verwendet stattdessen das modulare Bundle unter:
+ * - docs/app.bundle.js (Hauptanwendung)
+ * - docs/simulation-core.js (Worker-Build)
+ * 
+ * Der Quellcode befindet sich in src/
+ * 
+ * Diese Datei wird nur zu Referenzzwecken aufbewahrt.
+ * ========================================================================
+ */
+
+/**
+ * ETF Sparplan Simulator - Steuermodell und Vereinfachungen (LEGACY)
  * 
  * STEUERMODELL (realitätsnah):
  * - Vorabpauschale: Wird im Dezember berechnet, aber erst im Januar des Folgejahres eingezogen

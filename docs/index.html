@@ -200,6 +200,33 @@
 
   <main class="page" role="main">
     <section class="panel panel--inputs" aria-label="Eingabeparameter">
+      <!-- Szenario-Tabs -->
+      <div class="scenario-header">
+        <div class="scenario-tabs" id="scenario-tabs">
+          <button class="scenario-tab scenario-tab--active" data-action="select" data-scenario="A">Szenario A</button>
+        </div>
+        <div class="scenario-actions">
+          <button type="button" class="btn btn--small btn--ghost" id="btn-wizard" title="Einstellungs-Wizard starten">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            Wizard
+          </button>
+          <button type="button" class="btn btn--small btn--ghost" id="btn-mode-toggle">Expertenmodus</button>
+        </div>
+      </div>
+
+      <!-- Preset-Buttons -->
+      <div class="preset-section">
+        <span class="preset-label">Vorlagen:</span>
+        <div class="preset-buttons" id="preset-buttons">
+          <button type="button" class="preset-btn" data-preset="fire" title="Lange Ansparphase, hohe ETF-Quote, 3.5% Entnahme">FIRE / Frührente</button>
+          <button type="button" class="preset-btn" data-preset="classic" title="67 → 95, moderate ETF-Quote">Klassische Rente</button>
+          <button type="button" class="preset-btn" data-preset="education" title="Kürzere Laufzeit, Entnahmen über 3-6 Jahre">Bildungskonto</button>
+          <button type="button" class="preset-btn" data-preset="emergency" title="Aggressiver Aufbau des Tagesgeldziels, konservativ in ETF">Notgroschen-Fokus</button>
+        </div>
+      </div>
+
       <form id="sim-form" novalidate aria-label="Sparplan-Simulation Formular">
         <div class="group">
           <div class="group__header">
@@ -240,10 +267,14 @@
               <span class="field-label" data-tooltip="Jährliche Inflationsrate für Kaufkraftberechnung. EZB-Ziel: 2%, historisch ~2-3%.">Inflation p.a. (%)</span>
               <input type="number" step="0.1" id="inflation_rate" value="2.0" min="-10" max="30">
             </label>
+            <label class="field field--checkbox">
+              <input type="checkbox" id="is_married">
+              <span class="field-label" data-tooltip="Verdoppelt den Sparerpauschbetrag auf 2.000€ für gemeinsam veranlagte Ehepaare/Lebenspartnerschaften.">Verheiratet / gemeinsam veranlagt</span>
+            </label>
             <label class="field">
-              <span class="field-label" data-tooltip="Jährlicher steuerfreier Freibetrag für Kapitalerträge. 1.000€ für Singles, 2.000€ für Verheiratete.">Sparerpauschbetrag (EUR)</span>
+              <span class="field-label" data-tooltip="Jährlicher steuerfreier Freibetrag für Kapitalerträge. Wird automatisch gesetzt: 1.000€ für Singles, 2.000€ für Verheiratete.">Sparerpauschbetrag (EUR)</span>
               <input type="number" step="100" id="sparerpauschbetrag" value="1000" min="0" max="10000">
-              <small class="field-hint">1000 EUR (Single) / 2000 EUR (Verheiratet)</small>
+              <small class="field-hint">Wird automatisch angepasst (1.000 / 2.000 €)</small>
             </label>
             <label class="field">
               <span class="field-label" data-tooltip="Zusätzliche Steuer auf Kapitalerträge für Kirchenmitglieder. Reduziert die Kapitalertragsteuer leicht (Sonderausgabenabzug).">Kirchensteuer</span>
@@ -254,9 +285,9 @@
               </select>
             </label>
             <label class="field">
-              <span class="field-label" data-tooltip="Basiszins für die Vorabpauschale bei thesaurierenden ETFs. Wird von der Bundesbank festgelegt (2024: 2,29%, 2025: 2,53%).">Basiszins Vorabpauschale (%)</span>
+              <span class="field-label" data-tooltip="Basiszins für die Vorabpauschale bei thesaurierenden ETFs. Historische Werte (2017-2025) werden automatisch verwendet. Dieser Wert gilt als Fallback für zukünftige Jahre.">Basiszins Vorabpauschale (%)</span>
               <input type="number" step="0.01" id="basiszins" value="2.53" min="-5" max="10">
-              <small class="field-hint">2024: 2,29% | 2025: 2,53%</small>
+              <small class="field-hint">Fallback für Zukunft; historische Werte automatisch</small>
             </label>
             <label class="field">
               <span class="field-label" data-tooltip="Fondstyp bestimmt die Teilfreistellung: Aktienfonds (30% steuerfrei), Mischfonds (15% steuerfrei), Rentenfonds/Andere (0% steuerfrei). § 20 InvStG.">Fondstyp (Teilfreistellung)</span>
@@ -436,6 +467,13 @@
               <input type="number" step="1" id="mc_seed" value="0" min="0" max="999999">
               <small class="field-hint">Für reproduzierbare Simulationen</small>
             </label>
+            <label class="field">
+              <span class="field-label" data-tooltip="Deterministische Stress-Szenarien testen die Auswirkung von frühen Crashs oder langen Seitwärtsmärkten auf deine Entnahmestrategie.">Stress-Test Szenario</span>
+              <select id="stress_scenario">
+                <option value="none">Standard (Zufällig)</option>
+              </select>
+              <small class="field-hint">Deterministisches Crash-Szenario für Entnahmephase</small>
+            </label>
           </div>
         </div>
 
@@ -452,8 +490,9 @@
               <div class="export-menu" id="export-menu">
                 <div class="export-menu-section">
                   <span class="export-menu-title">Standard-Simulation</span>
-                  <button type="button" class="export-menu-item" id="btn-export-csv">CSV exportieren</button>
-                  <button type="button" class="export-menu-item" id="btn-export-pdf">PDF exportieren</button>
+                  <button type="button" class="export-menu-item" id="btn-export-csv">CSV (Monatsdetails)</button>
+                  <button type="button" class="export-menu-item" id="btn-export-yearly-csv">CSV (Jahresübersicht)</button>
+                  <button type="button" class="export-menu-item" id="btn-export-pdf">PDF Report</button>
                 </div>
                 <div class="export-menu-section">
                   <span class="export-menu-title">Monte-Carlo-Simulation</span>
@@ -514,6 +553,62 @@
         </div>
         <div class="graph-wrapper">
           <canvas id="graph" aria-label="Vermögensgraph"></canvas>
+        </div>
+
+        <!-- Szenarien-Vergleich (wird nur angezeigt wenn mehrere Szenarien aktiv) -->
+        <div class="comparison-section" id="comparison-section" style="display: none;">
+          <div class="result-header">
+            <div>
+              <p class="eyebrow">Multi-Szenario</p>
+              <h2>Szenarien-Vergleich</h2>
+            </div>
+          </div>
+          <div class="mc-legend" id="comparison-legend">
+            <span class="legend__item"><span class="dot" style="background: #f59e0b;"></span>Szenario A</span>
+            <span class="legend__item"><span class="dot" style="background: #3b82f6;"></span>Szenario B</span>
+            <span class="legend__item"><span class="dot" style="background: #8b5cf6;"></span>Szenario C</span>
+          </div>
+          <div class="graph-wrapper">
+            <canvas id="comparison-graph" aria-label="Szenarien-Vergleichsgraph"></canvas>
+          </div>
+          <div class="comparison-table-wrapper">
+            <table class="comparison-table" id="comparison-table">
+              <thead>
+                <tr>
+                  <th>Kennzahl</th>
+                  <th id="comp-header-a">Szenario A</th>
+                  <th id="comp-header-b">Szenario B</th>
+                  <th id="comp-header-c" style="display: none;">Szenario C</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Endvermögen (nominal)</td>
+                  <td id="comp-end-a">-</td>
+                  <td id="comp-end-b">-</td>
+                  <td id="comp-end-c" style="display: none;">-</td>
+                </tr>
+                <tr>
+                  <td>Endvermögen (real)</td>
+                  <td id="comp-end-real-a">-</td>
+                  <td id="comp-end-real-b">-</td>
+                  <td id="comp-end-real-c" style="display: none;">-</td>
+                </tr>
+                <tr>
+                  <td>Erfolgswahrscheinlichkeit</td>
+                  <td id="comp-success-a">-</td>
+                  <td id="comp-success-b">-</td>
+                  <td id="comp-success-c" style="display: none;">-</td>
+                </tr>
+                <tr>
+                  <td>Ruin-Risiko</td>
+                  <td id="comp-ruin-a">-</td>
+                  <td id="comp-ruin-b">-</td>
+                  <td id="comp-ruin-c" style="display: none;">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="result-header result-header--stats">
@@ -678,6 +773,11 @@
             <div class="mc-highlight-meta">
               <span id="mc-iterations-done">-</span> Simulationen durchgeführt
             </div>
+          </div>
+
+          <!-- Textuelle MC-Zusammenfassung -->
+          <div class="mc-summary" id="mc-summary">
+            <p class="mc-summary-text" id="mc-summary-text"></p>
           </div>
 
           <!-- Chart direkt nach Erfolgswahrscheinlichkeit (wie bei Standard) -->
@@ -1085,9 +1185,45 @@
 
   <div id="tooltip" class="tooltip" aria-hidden="true"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="simulation-core.js"></script>
-  <script src="app.js"></script>
+  <!-- Wizard Modal -->
+  <div class="modal-overlay" id="wizard-modal" aria-hidden="true">
+    <div class="modal modal--wizard">
+      <div class="wizard-content">
+        <!-- Wizard-Inhalt wird dynamisch generiert -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Risiko-Widget (wird dynamisch gefüllt) -->
+  <div class="risk-widget-container">
+    <div class="risk-widget" id="risk-widget">
+      <div class="risk-widget-header">
+        <h4>Risiko-Übersicht</h4>
+      </div>
+      <div class="risk-widget-grid">
+        <div class="risk-item risk-item--unknown">
+          <span class="risk-indicator"></span>
+          <span class="risk-label">Erfolg</span>
+          <span class="risk-value">-</span>
+        </div>
+        <div class="risk-item risk-item--unknown">
+          <span class="risk-indicator"></span>
+          <span class="risk-label">Ruin</span>
+          <span class="risk-value">-</span>
+        </div>
+        <div class="risk-item risk-item--unknown">
+          <span class="risk-indicator"></span>
+          <span class="risk-label">Notgroschen</span>
+          <span class="risk-value">-</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Message Toast -->
+  <div id="message" class="message" role="alert" aria-live="polite"></div>
+
+  <!-- ETF Simulator v2.0 - Modular Bundle -->
+  <script src="app.bundle.js"></script>
 </body>
 </html>
