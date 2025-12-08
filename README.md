@@ -65,20 +65,65 @@ Alle Eingaben werden im Browser (localStorage) gespeichert und beim nächsten Be
 
 ## Technologie
 
-- **Vanilla JavaScript** – Keine Abhängigkeiten
+- **Vue 3** – Composition API mit `<script setup>`
+- **Pinia** – State Management
+- **Vite** – Build Tool & Dev Server
 - **Canvas API** – Für performante Graphen
 - **CSS Grid/Flexbox** – Responsives Layout
 - **LocalStorage** – Persistente Einstellungen
+
+## Installation & Development
+
+```bash
+# Dependencies installieren
+npm install
+
+# Development Server starten
+npm run dev
+
+# Produktions-Build erstellen
+npm run build
+
+# Build-Vorschau
+npm run preview
+
+# Tests ausführen
+npm test
+```
 
 ## Projektstruktur
 
 ```
 etf_calculator/
-├── docs/
-│   ├── index.html    # Hauptseite
-│   ├── app.js        # Simulationslogik & UI
-│   └── styles.css    # Styling
-└── README.md
+├── src/
+│   ├── main.js              # Vue Entry Point
+│   ├── App.vue              # Root-Komponente
+│   ├── components/          # Vue-Komponenten
+│   │   ├── TopBar.vue
+│   │   ├── ScenarioForm.vue
+│   │   ├── ResultsPanel.vue
+│   │   ├── StandardTab.vue
+│   │   ├── MonteCarloTab.vue
+│   │   ├── StandardChart.vue
+│   │   └── ...
+│   ├── stores/              # Pinia Stores
+│   │   ├── scenario.js
+│   │   ├── simulation.js
+│   │   ├── monteCarlo.js
+│   │   └── ui.js
+│   ├── composables/         # Vue Composables
+│   ├── core/                # Framework-unabhängige Logik
+│   │   ├── simulation-core.js
+│   │   ├── mc-analysis.js
+│   │   ├── constants.js
+│   │   └── ...
+│   └── assets/
+│       └── styles.css
+├── docs/                    # Build-Output (GitHub Pages)
+├── tests/                   # Unit Tests
+├── index.html               # Vite Entry HTML
+├── vite.config.js           # Vite Konfiguration
+└── package.json
 ```
 
 ## Lizenz

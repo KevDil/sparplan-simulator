@@ -1015,11 +1015,12 @@ select option {
 }
 
 .tab-content {
-  display: none;
+  /* Standardmäßig sichtbar; Vue's v-show setzt bei Bedarf display:none inline. */
+  display: block;
 }
 
 .tab-content--active {
-  display: block;
+  /* Nur für die Einblend-Animation, nicht mehr für die Sichtbarkeit zuständig. */
   animation: fadeIn 0.2s ease;
 }
 
@@ -1136,6 +1137,35 @@ select option {
   color: var(--accent);
 }
 
+/* MC Summary Box (für generateMcSummaryText) */
+.mc-summary-box {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(56, 189, 248, 0.08));
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin: 16px 0 24px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.mc-summary-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.mc-summary-box .mc-summary-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.mc-summary-box .mc-summary-text strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* Comparison Section */
 .comparison-section {
   margin-top: 32px;
@@ -1219,6 +1249,55 @@ select option {
 /* Stats Grid for MC */
 .stats-grid--mc {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* SoRR Grid - alle Felder in einer Reihe */
+.stats-grid--sorr {
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.75rem;
+}
+
+@media (max-width: 1400px) {
+  .stats-grid--sorr {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .stats-grid--sorr {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.stats-grid--sorr .stat-card {
+  min-width: 0;
+}
+
+.stats-grid--sorr .stat-label {
+  font-size: 0.65rem;
+}
+
+/* Optimizer Button Section */
+.mc-optimize-section {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+
+.btn--optimize {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: none;
+  color: white;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn--optimize:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
 .stat-card--worst {
@@ -1470,6 +1549,13 @@ canvas#mc-graph {
 .btn-scale--active {
   background: rgba(99, 102, 241, 0.3);
   color: var(--text);
+}
+
+.chart-controls .divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
 }
 
 .mc-legend {

@@ -16,11 +16,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const isWatch = process.argv.includes('--watch');
 
-// Build-Konfiguration
+// Build-Konfiguration (Legacy v2.x DOM-basierte App)
 const buildOptions = {
-  entryPoints: ['src/main.js'],
+  entryPoints: ['legacy/legacy-main.js'],
   bundle: true,
-  outfile: 'docs/app.bundle.js',
+  outfile: 'docs/legacy/app.bundle.js',
   format: 'iife',
   globalName: 'ETFSimulator',
   target: ['es2020'],
@@ -28,9 +28,10 @@ const buildOptions = {
   sourcemap: isWatch,
   banner: {
     js: `/**
- * ETF Sparplan & Entnahme Simulator v2.0
+ * ETF Sparplan & Entnahme Simulator v2.0 (Legacy)
  * Bundled: ${new Date().toISOString()}
  * https://github.com/KevDil/sparplan-simulator
+ * DEPRECATED: Use Vue 3 app via 'npm run build'
  */`
   },
   define: {
@@ -40,16 +41,16 @@ const buildOptions = {
 
 // Worker-Bundle-Konfiguration (simulation-core.js für Worker)
 const workerBuildOptions = {
-  entryPoints: ['src/simulation-core.js'],
+  entryPoints: ['legacy/simulation-core.js'],
   bundle: true,
-  outfile: 'docs/simulation-core.js',
+  outfile: 'docs/legacy/simulation-core.js',
   format: 'iife',
   globalName: 'SimulationCore',
   target: ['es2020'],
   minify: !isWatch,
   banner: {
     js: `/**
- * ETF Simulator - Simulation Core (Worker Build)
+ * ETF Simulator - Simulation Core (Worker Build) - Legacy
  * Bundled: ${new Date().toISOString()}
  */
 // Globale Variablen für Worker-Kompatibilität
@@ -66,34 +67,34 @@ if (typeof self !== 'undefined') {
 
 // MC-Worker Bundle-Konfiguration
 const mcWorkerBuildOptions = {
-  entryPoints: ['src/mc-worker-entry.js'],
+  entryPoints: ['legacy/mc-worker-entry.js'],
   bundle: true,
-  outfile: 'docs/mc-worker.js',
+  outfile: 'docs/legacy/mc-worker.js',
   format: 'iife',
   target: ['es2020'],
   minify: !isWatch,
   banner: {
     js: `/**
- * ETF Simulator - Monte-Carlo Web Worker
+ * ETF Simulator - Monte-Carlo Web Worker (Legacy)
  * Bundled: ${new Date().toISOString()}
- * Source: src/mc-worker-entry.js
+ * Source: legacy/mc-worker-entry.js
  */`
   }
 };
 
 // Optimizer-Worker Bundle-Konfiguration
 const optimizerWorkerBuildOptions = {
-  entryPoints: ['src/optimizer-worker-entry.js'],
+  entryPoints: ['legacy/optimizer-worker-entry.js'],
   bundle: true,
-  outfile: 'docs/optimizer-worker.js',
+  outfile: 'docs/legacy/optimizer-worker.js',
   format: 'iife',
   target: ['es2020'],
   minify: !isWatch,
   banner: {
     js: `/**
- * ETF Simulator - Optimizer Web Worker
+ * ETF Simulator - Optimizer Web Worker (Legacy)
  * Bundled: ${new Date().toISOString()}
- * Source: src/optimizer-worker-entry.js
+ * Source: legacy/optimizer-worker-entry.js
  */`
   }
 };
@@ -121,10 +122,12 @@ async function build() {
         esbuild.build(mcWorkerBuildOptions),
         esbuild.build(optimizerWorkerBuildOptions),
       ]);
-      console.log('✅ Build complete: docs/app.bundle.js');
-      console.log('✅ Build complete: docs/simulation-core.js (Worker)');
-      console.log('✅ Build complete: docs/mc-worker.js (MC Worker)');
-      console.log('✅ Build complete: docs/optimizer-worker.js (Optimizer Worker)');
+      console.log('✅ Legacy build complete: docs/legacy/app.bundle.js');
+      console.log('✅ Legacy build complete: docs/legacy/simulation-core.js (Worker)');
+      console.log('✅ Legacy build complete: docs/legacy/mc-worker.js (MC Worker)');
+      console.log('✅ Legacy build complete: docs/legacy/optimizer-worker.js (Optimizer Worker)');
+      console.log('');
+      console.log('💡 For Vue 3 app, use: npm run build');
     }
   } catch (error) {
     console.error('❌ Build failed:', error);

@@ -27,14 +27,14 @@ import {
   createSeededRandom,
   setRng,
   getStressReturn,
-} from '../src/simulation-core.js';
+} from '../src/core/simulation-core.js';
 
 import {
   TAX_RATE_BASE,
   SOLI_RATE,
   TEILFREISTELLUNG_MAP,
   SPARERPAUSCHBETRAG_SINGLE,
-} from '../src/constants.js';
+} from '../src/core/constants.js';
 
 // ============ UTILITY TESTS ============
 

@@ -1,24 +1,28 @@
 # Legacy-Dateien
 
-Dieses Verzeichnis enthält archivierte Dateien aus Version 1.x des ETF Simulators.
+Dieses Verzeichnis enthält archivierte Dateien aus Version 1.x und 2.x (pre-Vue) des ETF Simulators.
 
-## app.v1.js
+**Status:** Deprecated seit Version 3.0 (Vue 3 Migration).
 
-Die ursprüngliche monolithische v1.x-Anwendung. Enthielt die gesamte Logik (UI, State, Simulation, Monte-Carlo, Export) in einer einzigen Datei.
+## Inhalt
 
-**Status:** Deprecated, nicht mehr in Verwendung seit Version 2.0.
+| Datei | Beschreibung |
+|-------|-------------|
+| `app.v1.js` | Monolithische v1.x-Anwendung (vollständig deprecated) |
+| `legacy-main.js` | v2.x DOM-basierter Einstiegspunkt |
+| `state.js` | v2.x State-Management (ohne Pinia) |
+| `ui-form.js`, `ui-charts.js` | v2.x DOM-UI-Module |
+| `optimizer-*.js` | Optimizer-Module (noch nicht nach Vue portiert) |
+| `*.js` (Core-Duplikate) | Kopien von `src/core/` für Legacy-Kompatibilität |
 
-Der v2.0-Quellcode befindet sich modularisiert unter `src/`:
-- `main.js` - Haupteinstiegspunkt
-- `simulation-core.js` - Simulationslogik
-- `mc-analysis.js` - Monte-Carlo-Analyse
-- `mc-path-metrics.js` - MC-Pfad-Metriken
-- `optimizer-logic.js` - Optimierer-Logik
-- `state.js`, `ui-form.js`, `ui-charts.js` - State & UI
-- `export.js` - Export-Funktionen
+## Aktueller Code (v3.0 - Vue 3)
 
-Die gebündelten Artefakte liegen unter `docs/`:
-- `app.bundle.js` - Haupt-Bundle
-- `mc-worker.js` - Monte-Carlo-Worker
-- `optimizer-worker.js` - Optimierer-Worker
-- `simulation-core.js` - Worker-Build des Simkerns
+Der aktive Quellcode befindet sich unter:
+- `src/main.js` - Vue 3 Einstiegspunkt
+- `src/core/` - Framework-unabhängige Kernlogik (Single Source of Truth)
+- `src/stores/` - Pinia Stores
+- `src/components/` - Vue 3 Komponenten
+
+## Legacy-Build
+
+Falls benötigt: `npm run build:legacy` (erfordert Anpassung von `build.js` auf dieses Verzeichnis)

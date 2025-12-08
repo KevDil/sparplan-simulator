@@ -16,20 +16,20 @@ import {
   DEFAULT_SUCCESS_THRESHOLD_REAL,
   DEFAULT_RUIN_THRESHOLD_PERCENT,
   SUCCESS_THRESHOLD_MONTHS,
-} from '../src/mc-path-metrics.js';
+} from '../src/core/mc-path-metrics.js';
 
 import {
   analyzeMonteCarloResults,
   aggregateChunkResults,
-} from '../src/mc-analysis.js';
+} from '../src/core/mc-analysis.js';
 
 import {
   simulate,
   createSeededRandom,
   setRng,
-} from '../src/simulation-core.js';
+} from '../src/core/simulation-core.js';
 
-import { MONTHS_PER_YEAR } from '../src/constants.js';
+import { MONTHS_PER_YEAR } from '../src/core/constants.js';
 
 // ============ TEST PARAMETERS ============
 
