@@ -58,7 +58,31 @@ const createDefaultScenario = (id = 'A', name = 'Szenario A') => ({
   mcSuccessThreshold: 100,
   mcRuinThreshold: 10,
   mcSeed: 0,
-  stressScenario: 'none'
+  stressScenario: 'none',
+  
+  // MC-Erweiterte Risiken
+  mcInflationMode: 'deterministic',
+  mcInflationVolatility: 1.5,
+  mcInflationFloor: -1.0,
+  mcInflationCap: 10.0,
+  mcCashRateMode: 'deterministic',
+  mcCashRateVolatility: 1.0,
+  mcCorrInflationCash: 0.7,
+  mcCorrReturnInflation: -0.1,
+  mcSavingShockMode: 'off',
+  mcSavingShockPNeg: 0.03,
+  mcSavingShockPPos: 0.05,
+  mcSavingShockFactorNeg: 0.0,
+  mcSavingShockFactorPos: 1.15,
+  mcSavingShockDurationNeg: 12,
+  mcExtraExpenseMode: 'off',
+  mcExtraExpenseProbability: 0.05,
+  mcExtraExpensePercent: 5.0,
+  mcExtraExpenseFixed: 10000,
+  mcCrashMode: 'off',
+  mcCrashProbability: 0.03,
+  mcCrashDropMin: -0.25,
+  mcCrashDropMax: -0.45,
 })
 
 export const useScenarioStore = defineStore('scenario', () => {

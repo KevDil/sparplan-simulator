@@ -805,6 +805,239 @@ const stressScenarios = computed(() => Object.entries(STRESS_SCENARIOS || {}).ma
         </div>
       </div>
 
+      <!-- MC-Erweiterte Risiken (nur Expert Mode) -->
+      <div class="group" v-if="uiStore.expertMode">
+        <div class="group__header">
+          <h2>MC-Erweiterte Risiken</h2>
+          <p>Zusätzliche Schwankungsquellen für realistischere Szenarien.</p>
+        </div>
+        
+        <!-- Stochastische Inflation -->
+        <div class="grid">
+          <label class="field">
+            <span class="field-label" data-tooltip="Aktiviert zufällige jährliche Schwankungen der Inflationsrate.">Inflation-Modus</span>
+            <select
+              :value="scenario.mcInflationMode"
+              @change="updateField('mcInflationMode', $event.target.value)"
+            >
+              <option value="deterministic">Deterministisch (fix)</option>
+              <option value="random">Stochastisch (zufällig)</option>
+            </select>
+          </label>
+          <label class="field" v-if="scenario.mcInflationMode === 'random'">
+            <span class="field-label" data-tooltip="Standardabweichung der jährlichen Inflation in Prozentpunkten.">Inflation Volatilität (%-Pkt.)</span>
+            <input
+              type="number"
+              step="0.1"
+              :value="scenario.mcInflationVolatility"
+              @input="updateField('mcInflationVolatility', +$event.target.value)"
+              min="0.1"
+              max="5"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcInflationMode === 'random'">
+            <span class="field-label" data-tooltip="Minimale jährliche Inflationsrate.">Inflation Min (%)</span>
+            <input
+              type="number"
+              step="0.5"
+              :value="scenario.mcInflationFloor"
+              @input="updateField('mcInflationFloor', +$event.target.value)"
+              min="-5"
+              max="5"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcInflationMode === 'random'">
+            <span class="field-label" data-tooltip="Maximale jährliche Inflationsrate.">Inflation Max (%)</span>
+            <input
+              type="number"
+              step="0.5"
+              :value="scenario.mcInflationCap"
+              @input="updateField('mcInflationCap', +$event.target.value)"
+              min="2"
+              max="20"
+            >
+          </label>
+        </div>
+        
+        <!-- Stochastische Cashzinsen -->
+        <div class="grid">
+          <label class="field">
+            <span class="field-label" data-tooltip="Aktiviert zufällige jährliche Schwankungen des Tagesgeldzinses.">Cashzins-Modus</span>
+            <select
+              :value="scenario.mcCashRateMode"
+              @change="updateField('mcCashRateMode', $event.target.value)"
+            >
+              <option value="deterministic">Deterministisch (fix)</option>
+              <option value="random">Stochastisch (zufällig)</option>
+            </select>
+          </label>
+          <label class="field" v-if="scenario.mcCashRateMode === 'random'">
+            <span class="field-label" data-tooltip="Standardabweichung des jährlichen Cashzinses in Prozentpunkten.">Cashzins Volatilität (%-Pkt.)</span>
+            <input
+              type="number"
+              step="0.1"
+              :value="scenario.mcCashRateVolatility"
+              @input="updateField('mcCashRateVolatility', +$event.target.value)"
+              min="0.1"
+              max="3"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcCashRateMode === 'random' || scenario.mcInflationMode === 'random'">
+            <span class="field-label" data-tooltip="Korrelation zwischen Inflation und Cashzins (0.7 = stark positiv).">Korr. Inflation/Cashzins</span>
+            <input
+              type="number"
+              step="0.1"
+              :value="scenario.mcCorrInflationCash"
+              @input="updateField('mcCorrInflationCash', +$event.target.value)"
+              min="0"
+              max="1"
+            >
+          </label>
+        </div>
+        
+        <!-- Sparraten-Schocks -->
+        <div class="grid">
+          <label class="field">
+            <span class="field-label" data-tooltip="Aktiviert zufällige Einkommensschocks (Arbeitslosigkeit, Beförderung).">Einkommensschocks</span>
+            <select
+              :value="scenario.mcSavingShockMode"
+              @change="updateField('mcSavingShockMode', $event.target.value)"
+            >
+              <option value="off">Aus</option>
+              <option value="simple">Einfach (Ereignis-basiert)</option>
+            </select>
+          </label>
+          <label class="field" v-if="scenario.mcSavingShockMode === 'simple'">
+            <span class="field-label" data-tooltip="Wahrscheinlichkeit eines negativen Schocks pro Jahr.">Negativ-Schock (% p.a.)</span>
+            <input
+              type="number"
+              step="0.5"
+              :value="(scenario.mcSavingShockPNeg * 100)"
+              @input="updateField('mcSavingShockPNeg', +$event.target.value / 100)"
+              min="0"
+              max="20"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcSavingShockMode === 'simple'">
+            <span class="field-label" data-tooltip="Dauer eines negativen Schocks in Monaten.">Schock-Dauer (Monate)</span>
+            <input
+              type="number"
+              step="1"
+              :value="scenario.mcSavingShockDurationNeg"
+              @input="updateField('mcSavingShockDurationNeg', +$event.target.value)"
+              min="1"
+              max="36"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcSavingShockMode === 'simple'">
+            <span class="field-label" data-tooltip="Faktor auf Sparrate bei negativem Schock (0 = keine Sparleistung).">Faktor bei neg. Schock</span>
+            <input
+              type="number"
+              step="0.1"
+              :value="scenario.mcSavingShockFactorNeg"
+              @input="updateField('mcSavingShockFactorNeg', +$event.target.value)"
+              min="0"
+              max="1"
+            >
+          </label>
+        </div>
+        
+        <!-- Unerwartete Ausgaben -->
+        <div class="grid">
+          <label class="field">
+            <span class="field-label" data-tooltip="Aktiviert zufällige Zusatzausgaben in der Entnahmephase.">Extra-Ausgaben (Entnahme)</span>
+            <select
+              :value="scenario.mcExtraExpenseMode"
+              @change="updateField('mcExtraExpenseMode', $event.target.value)"
+            >
+              <option value="off">Aus</option>
+              <option value="percent_of_wealth">% vom Vermögen</option>
+              <option value="fixed_real">Fester Betrag (real)</option>
+            </select>
+          </label>
+          <label class="field" v-if="scenario.mcExtraExpenseMode !== 'off'">
+            <span class="field-label" data-tooltip="Wahrscheinlichkeit einer Extra-Ausgabe pro Jahr.">Wahrscheinlichkeit (% p.a.)</span>
+            <input
+              type="number"
+              step="1"
+              :value="(scenario.mcExtraExpenseProbability * 100)"
+              @input="updateField('mcExtraExpenseProbability', +$event.target.value / 100)"
+              min="0"
+              max="30"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcExtraExpenseMode === 'percent_of_wealth'">
+            <span class="field-label" data-tooltip="Höhe der Extra-Ausgabe als % des Vermögens.">Höhe (% vom Vermögen)</span>
+            <input
+              type="number"
+              step="1"
+              :value="scenario.mcExtraExpensePercent"
+              @input="updateField('mcExtraExpensePercent', +$event.target.value)"
+              min="1"
+              max="30"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcExtraExpenseMode === 'fixed_real'">
+            <span class="field-label" data-tooltip="Höhe der Extra-Ausgabe in EUR (kaufkraftbereinigt).">Höhe (EUR real)</span>
+            <input
+              type="number"
+              step="1000"
+              :value="scenario.mcExtraExpenseFixed"
+              @input="updateField('mcExtraExpenseFixed', +$event.target.value)"
+              min="1000"
+              max="100000"
+            >
+          </label>
+        </div>
+        
+        <!-- Crash-Ereignisse -->
+        <div class="grid">
+          <label class="field">
+            <span class="field-label" data-tooltip="Aktiviert zufällige Crash-Ereignisse zusätzlich zur normalen Volatilität.">Crash-Ereignisse</span>
+            <select
+              :value="scenario.mcCrashMode"
+              @change="updateField('mcCrashMode', $event.target.value)"
+            >
+              <option value="off">Aus</option>
+              <option value="simple">Einfach (zufällige Crashes)</option>
+            </select>
+          </label>
+          <label class="field" v-if="scenario.mcCrashMode === 'simple'">
+            <span class="field-label" data-tooltip="Wahrscheinlichkeit eines Crashes pro Jahr.">Crash-Wahrsch. (% p.a.)</span>
+            <input
+              type="number"
+              step="0.5"
+              :value="(scenario.mcCrashProbability * 100)"
+              @input="updateField('mcCrashProbability', +$event.target.value / 100)"
+              min="0"
+              max="15"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcCrashMode === 'simple'">
+            <span class="field-label" data-tooltip="Minimale Crash-Tiefe (z.B. -25%).">Min. Crash (%)</span>
+            <input
+              type="number"
+              step="5"
+              :value="(scenario.mcCrashDropMin * 100)"
+              @input="updateField('mcCrashDropMin', +$event.target.value / 100)"
+              min="-60"
+              max="-10"
+            >
+          </label>
+          <label class="field" v-if="scenario.mcCrashMode === 'simple'">
+            <span class="field-label" data-tooltip="Maximale Crash-Tiefe (z.B. -45%).">Max. Crash (%)</span>
+            <input
+              type="number"
+              step="5"
+              :value="(scenario.mcCrashDropMax * 100)"
+              @input="updateField('mcCrashDropMax', +$event.target.value / 100)"
+              min="-70"
+              max="-15"
+            >
+          </label>
+        </div>
+      </div>
+
       <div class="actions">
         <button type="submit" class="btn btn--primary">Simulation starten</button>
         <button 

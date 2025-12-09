@@ -70,7 +70,7 @@ export const MC_CHUNK_SIZE = 200;
 
 // ============ SZENARIO-SCHEMA ============
 
-export const SCENARIO_VERSION = '2.0.0';
+export const SCENARIO_VERSION = '2.1.0';
 
 export const DEFAULT_SCENARIO = {
   // Meta
@@ -136,6 +136,41 @@ export const DEFAULT_SCENARIO = {
   
   // Stress-Test
   stress_scenario: 'none',
+  
+  // MC-Erweiterte Risiken (Stufe 1)
+  // Stochastische Inflation
+  mc_inflation_mode: 'deterministic', // 'deterministic' | 'random'
+  mc_inflation_volatility: 1.5, // Standardabweichung in Prozentpunkten
+  mc_inflation_floor: -1.0, // Untergrenze für Inflation
+  mc_inflation_cap: 10.0, // Obergrenze für Inflation
+  
+  // Stochastische Cashzinsen
+  mc_cash_rate_mode: 'deterministic', // 'deterministic' | 'random'
+  mc_cash_rate_volatility: 1.0, // Standardabweichung in Prozentpunkten
+  mc_corr_inflation_cash: 0.7, // Korrelation Inflation <-> Cashzins
+  
+  // Sparraten-Schocks (Einkommensrisiko)
+  mc_saving_shock_mode: 'off', // 'off' | 'simple'
+  mc_saving_shock_p_neg: 0.03, // Wahrscheinlichkeit negativer Schock pro Jahr (3%)
+  mc_saving_shock_p_pos: 0.05, // Wahrscheinlichkeit positiver Schock pro Jahr (5%)
+  mc_saving_shock_factor_neg: 0.0, // Faktor bei negativem Schock (0 = vollständige Aussetzung)
+  mc_saving_shock_factor_pos: 1.15, // Faktor bei positivem Schock (15% Erhöhung)
+  mc_saving_shock_duration_neg: 12, // Dauer negativer Schock in Monaten
+  
+  // Unerwartete Ausgaben (Entnahmephase)
+  mc_extra_expense_mode: 'off', // 'off' | 'percent_of_wealth' | 'fixed_real'
+  mc_extra_expense_probability: 0.05, // Wahrscheinlichkeit pro Jahr (5%)
+  mc_extra_expense_percent: 5.0, // Prozent vom Vermögen
+  mc_extra_expense_fixed: 10000, // Fester Betrag (real)
+  
+  // Stochastische Crash-Ereignisse
+  mc_crash_mode: 'off', // 'off' | 'simple'
+  mc_crash_probability: 0.03, // Wahrscheinlichkeit pro Jahr (3%)
+  mc_crash_drop_min: -0.25, // Minimaler Crash (-25%)
+  mc_crash_drop_max: -0.45, // Maximaler Crash (-45%)
+  
+  // Korrelationen (Stufe 1.5)
+  mc_corr_return_inflation: -0.1, // Korrelation Aktienrendite <-> Inflation
 };
 
 // ============ SZENARIO-VORLAGEN ============
@@ -251,4 +286,27 @@ export const EXPERT_ONLY_FIELDS = [
   'mc_seed',
   'mc_ruin_threshold',
   'rent_is_gross',
+  // MC-Erweiterte Risiken
+  'mc_inflation_mode',
+  'mc_inflation_volatility',
+  'mc_inflation_floor',
+  'mc_inflation_cap',
+  'mc_cash_rate_mode',
+  'mc_cash_rate_volatility',
+  'mc_corr_inflation_cash',
+  'mc_saving_shock_mode',
+  'mc_saving_shock_p_neg',
+  'mc_saving_shock_p_pos',
+  'mc_saving_shock_factor_neg',
+  'mc_saving_shock_factor_pos',
+  'mc_saving_shock_duration_neg',
+  'mc_extra_expense_mode',
+  'mc_extra_expense_probability',
+  'mc_extra_expense_percent',
+  'mc_extra_expense_fixed',
+  'mc_crash_mode',
+  'mc_crash_probability',
+  'mc_crash_drop_min',
+  'mc_crash_drop_max',
+  'mc_corr_return_inflation',
 ];

@@ -94,7 +94,30 @@ export const useMonteCarloStore = defineStore('monteCarlo', () => {
       successThreshold: scenario.mcSuccessThreshold,
       ruinThresholdPercent: (scenario.mcRuinThreshold ?? 10),
       showIndividualPaths: !!scenario.mcShowIndividual,
-      stressScenario: scenario.stressScenario || 'none'
+      stressScenario: scenario.stressScenario || 'none',
+      // MC-Erweiterte Risiken
+      inflationMode: scenario.mcInflationMode || 'deterministic',
+      inflationVolatility: scenario.mcInflationVolatility ?? 1.5,
+      inflationFloor: scenario.mcInflationFloor ?? -1.0,
+      inflationCap: scenario.mcInflationCap ?? 10.0,
+      cashRateMode: scenario.mcCashRateMode || 'deterministic',
+      cashRateVolatility: scenario.mcCashRateVolatility ?? 1.0,
+      corrInflationCash: scenario.mcCorrInflationCash ?? 0.7,
+      corrReturnInflation: scenario.mcCorrReturnInflation ?? -0.1,
+      savingShockMode: scenario.mcSavingShockMode || 'off',
+      savingShockPNeg: scenario.mcSavingShockPNeg ?? 0.03,
+      savingShockPPos: scenario.mcSavingShockPPos ?? 0.05,
+      savingShockFactorNeg: scenario.mcSavingShockFactorNeg ?? 0.0,
+      savingShockFactorPos: scenario.mcSavingShockFactorPos ?? 1.15,
+      savingShockDurationNeg: scenario.mcSavingShockDurationNeg ?? 12,
+      extraExpenseMode: scenario.mcExtraExpenseMode || 'off',
+      extraExpenseProbability: scenario.mcExtraExpenseProbability ?? 0.05,
+      extraExpensePercent: scenario.mcExtraExpensePercent ?? 5.0,
+      extraExpenseFixed: scenario.mcExtraExpenseFixed ?? 10000,
+      crashMode: scenario.mcCrashMode || 'off',
+      crashProbability: scenario.mcCrashProbability ?? 0.03,
+      crashDropMin: scenario.mcCrashDropMin ?? -0.25,
+      crashDropMax: scenario.mcCrashDropMax ?? -0.45,
     }
 
     console.log('[MC] postMessage start', { params, iterations, volatility, mcOptions })

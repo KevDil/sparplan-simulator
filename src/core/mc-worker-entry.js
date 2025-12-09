@@ -144,7 +144,7 @@ function runMonteCarloSimulationWorker(params, iterations, volatility, mcOptions
     const batchEnd = Math.min(i + batchSize, iterations);
     
     for (let j = i; j < batchEnd; j++) {
-      const history = simulate(params, volatility);
+      const history = simulate(params, volatility, mcOptions);
       allHistories.push(history);
     }
     
@@ -211,11 +211,8 @@ function runChunk(params, volatility, mcOptions, startIdx, count, totalIteration
     // Deterministisches Seeding: seed = baseSeed + globalIndex
     setRng(createSeededRandom(baseSeed + globalIdx));
     
-    // Stress-Szenario Option für MC
-    const simOptions = {};
-    if (mcOptions.stressScenario && mcOptions.stressScenario !== 'none') {
-      simOptions.stressScenario = mcOptions.stressScenario;
-    }
+    // Alle MC-Optionen an simulate übergeben (inkl. Stress-Szenario und erweiterte Risiken)
+    const simOptions = { ...mcOptions };
     
     const history = simulate(params, volatility, simOptions);
     

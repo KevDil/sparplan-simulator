@@ -86,6 +86,235 @@ export function percentile(sortedArr, p) {
   return sortedArr[lower] * (upper - idx) + sortedArr[upper] * (idx - lower);
 }
 
+// ============ MULTIVARIATE NORMAL (CHOLESKY) ============
+
+/**
+ * Generiert korrelierte Normalverteilungen via Cholesky-Zerlegung
+ * @param {number[]} z - Unabhängige Standardnormalvariablen
+ * @param {number[][]} correlationMatrix - Korrelationsmatrix (z.B. 2x2 oder 3x3)
+ * @returns {number[]} Korrelierte Normalvariablen
+ */
+export function correlatedNormal(z, correlationMatrix) {
+  const n = z.length;
+  // Cholesky-Zerlegung: L * L^T = correlationMatrix
+  const L = choleskyDecomposition(correlationMatrix);
+  const result = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      result[i] += L[i][j] * z[j];
+    }
+  }
+  return result;
+}
+
+/**
+ * Cholesky-Zerlegung einer positiv definiten Matrix
+ * @param {number[][]} A - Symmetrische positiv definite Matrix
+ * @returns {number[][]} Untere Dreiecksmatrix L
+ */
+function choleskyDecomposition(A) {
+  const n = A.length;
+  const L = Array(n).fill(null).map(() => Array(n).fill(0));
+  
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = 0;
+      for (let k = 0; k < j; k++) {
+        sum += L[i][k] * L[j][k];
+      }
+      if (i === j) {
+        L[i][j] = Math.sqrt(Math.max(0, A[i][i] - sum));
+      } else {
+        L[i][j] = L[j][j] > 0 ? (A[i][j] - sum) / L[j][j] : 0;
+      }
+    }
+  }
+  return L;
+}
+
+// ============ JÄHRLICHE PFAD-GENERATOREN ============
+
+/**
+ * Generiert jährliche stochastische Pfade für Inflation, Cashzins und Crashes
+ * @param {number} totalYears - Anzahl Jahre
+ * @param {Object} options - MC-Optionen
+ * @param {Object} params - Simulationsparameter
+ * @returns {Object} Jährliche Pfade
+ */
+export function generateAnnualPaths(totalYears, options, params) {
+  const {
+    inflationMode = 'deterministic',
+    inflationVolatility = 1.5,
+    inflationFloor = -1.0,
+    inflationCap = 10.0,
+    cashRateMode = 'deterministic',
+    cashRateVolatility = 1.0,
+    corrInflationCash = 0.7,
+    corrReturnInflation = -0.1,
+    crashMode = 'off',
+    crashProbability = 0.03,
+    crashDropMin = -0.25,
+    crashDropMax = -0.45,
+  } = options;
+
+  const baseInflation = params.inflation_rate_pa || 0;
+  const baseCashRate = params.savings_rate_pa || 0;
+
+  const annualInflation = new Array(totalYears);
+  const annualCashRates = new Array(totalYears);
+  const annualCrashEvents = new Array(totalYears).fill(null);
+  const annualReturnShocks = new Array(totalYears).fill(0); // Für Korrelation mit Inflation
+
+  // Korrelationsmatrix für [Inflation, CashRate, ReturnShock]
+  // Wir generieren korrelierte Schocks, die dann auf die Basiswerte angewandt werden
+  const useCorrelation = inflationMode === 'random' || cashRateMode === 'random';
+  
+  for (let year = 0; year < totalYears; year++) {
+    if (useCorrelation) {
+      // 3D korrelierte Normalverteilung: [zInflation, zCash, zReturn]
+      const z = [randomNormal(), randomNormal(), randomNormal()];
+      const corrMatrix = [
+        [1.0, corrInflationCash, corrReturnInflation],
+        [corrInflationCash, 1.0, corrReturnInflation * 0.5], // Schwächere Korrelation Cash/Return
+        [corrReturnInflation, corrReturnInflation * 0.5, 1.0]
+      ];
+      const correlated = correlatedNormal(z, corrMatrix);
+      
+      // Inflation
+      if (inflationMode === 'random') {
+        let inflation = baseInflation + correlated[0] * inflationVolatility;
+        inflation = Math.max(inflationFloor, Math.min(inflationCap, inflation));
+        annualInflation[year] = inflation;
+      } else {
+        annualInflation[year] = baseInflation;
+      }
+      
+      // Cash Rate
+      if (cashRateMode === 'random') {
+        // Cash Rate folgt der Inflation mit eigenem Rauschen
+        let cashRate = baseCashRate + correlated[1] * cashRateVolatility;
+        cashRate = Math.max(-0.5, Math.min(15.0, cashRate)); // Floor/Cap
+        annualCashRates[year] = cashRate;
+      } else {
+        annualCashRates[year] = baseCashRate;
+      }
+      
+      // Return Shock (für Korrelation mit Inflation)
+      annualReturnShocks[year] = correlated[2];
+    } else {
+      annualInflation[year] = baseInflation;
+      annualCashRates[year] = baseCashRate;
+    }
+    
+    // Crash-Events
+    if (crashMode === 'simple') {
+      const u = currentRng();
+      if (u < crashProbability) {
+        // Crash-Tiefe zwischen min und max
+        const crashSeverity = crashDropMin + currentRng() * (crashDropMax - crashDropMin);
+        annualCrashEvents[year] = crashSeverity;
+      }
+    }
+  }
+
+  return {
+    annualInflation,
+    annualCashRates,
+    annualCrashEvents,
+    annualReturnShocks,
+  };
+}
+
+/**
+ * Generiert Sparraten-Schock-Events
+ * @param {number} savingsMonths - Anzahl Monate in der Ansparphase
+ * @param {Object} options - MC-Optionen
+ * @returns {Object} Schock-Status pro Monat
+ */
+export function generateSavingShockEvents(savingsMonths, options) {
+  const {
+    savingShockMode = 'off',
+    savingShockPNeg = 0.03,
+    savingShockPPos = 0.05,
+    savingShockFactorNeg = 0.0,
+    savingShockFactorPos = 1.15,
+    savingShockDurationNeg = 12,
+  } = options;
+
+  if (savingShockMode === 'off') {
+    return { shockFactors: null, baselineMultipliers: null };
+  }
+
+  const totalMonths = savingsMonths;
+  const shockFactors = new Array(totalMonths).fill(1.0);
+  const baselineMultipliers = new Array(totalMonths).fill(1.0);
+  
+  let currentBaseline = 1.0;
+  let negShockMonthsRemaining = 0;
+  let negShockFactor = 1.0;
+
+  for (let month = 0; month < totalMonths; month++) {
+    const isYearStart = month % 12 === 0;
+    
+    if (isYearStart) {
+      // Prüfe auf positiven Schock (permanente Erhöhung)
+      if (currentRng() < savingShockPPos) {
+        currentBaseline *= savingShockFactorPos;
+      }
+      
+      // Prüfe auf negativen Schock (nur wenn kein aktiver negativer Schock)
+      if (negShockMonthsRemaining <= 0 && currentRng() < savingShockPNeg) {
+        negShockMonthsRemaining = savingShockDurationNeg;
+        negShockFactor = savingShockFactorNeg;
+      }
+    }
+    
+    baselineMultipliers[month] = currentBaseline;
+    
+    if (negShockMonthsRemaining > 0) {
+      shockFactors[month] = negShockFactor;
+      negShockMonthsRemaining--;
+    } else {
+      shockFactors[month] = 1.0;
+    }
+  }
+
+  return { shockFactors, baselineMultipliers };
+}
+
+/**
+ * Generiert unerwartete Ausgaben-Events für die Entnahmephase
+ * @param {number} withdrawalYears - Anzahl Jahre in der Entnahmephase
+ * @param {Object} options - MC-Optionen
+ * @returns {number[]} Jährliche Extra-Ausgaben (relativ zum Vermögen oder absolut)
+ */
+export function generateExtraExpenseEvents(withdrawalYears, options) {
+  const {
+    extraExpenseMode = 'off',
+    extraExpenseProbability = 0.05,
+    extraExpensePercent = 5.0,
+    extraExpenseFixed = 10000,
+  } = options;
+
+  if (extraExpenseMode === 'off') {
+    return null;
+  }
+
+  const events = new Array(withdrawalYears).fill(null);
+  
+  for (let year = 0; year < withdrawalYears; year++) {
+    if (currentRng() < extraExpenseProbability) {
+      if (extraExpenseMode === 'percent_of_wealth') {
+        events[year] = { type: 'percent', value: extraExpensePercent / 100 };
+      } else if (extraExpenseMode === 'fixed_real') {
+        events[year] = { type: 'fixed', value: extraExpenseFixed };
+      }
+    }
+  }
+
+  return events;
+}
+
 // ============ LOT CONSOLIDATION ============
 
 export function consolidateLots(etfLots, priceTolerance = 0.01) {
@@ -349,7 +578,7 @@ export function getStressReturn(stressScenario, monthIdx, savingsMonths, monthly
  * Unified simulation function for both standard and Monte-Carlo simulations.
  * @param {Object} params - Simulation parameters
  * @param {number} volatility - Annual volatility for stochastic simulation (0 = deterministic)
- * @param {Object} options - Additional options (stressScenario, etc.)
+ * @param {Object} options - Additional options (stressScenario, MC risk options, etc.)
  * @returns {Array} History array with monthly data points
  */
 export function simulate(params, volatility = 0, options = {}) {
@@ -391,7 +620,33 @@ export function simulate(params, volatility = 0, options = {}) {
     fondstyp = "aktien",
   } = params;
   
-  const { stressScenario = 'none', startYear = new Date().getFullYear() } = options;
+  const { 
+    stressScenario = 'none', 
+    startYear = new Date().getFullYear(),
+    // MC-Erweiterte Risiken
+    inflationMode = 'deterministic',
+    inflationVolatility = 1.5,
+    inflationFloor = -1.0,
+    inflationCap = 10.0,
+    cashRateMode = 'deterministic',
+    cashRateVolatility = 1.0,
+    corrInflationCash = 0.7,
+    corrReturnInflation = -0.1,
+    savingShockMode = 'off',
+    savingShockPNeg = 0.03,
+    savingShockPPos = 0.05,
+    savingShockFactorNeg = 0.0,
+    savingShockFactorPos = 1.15,
+    savingShockDurationNeg = 12,
+    extraExpenseMode = 'off',
+    extraExpenseProbability = 0.05,
+    extraExpensePercent = 5.0,
+    extraExpenseFixed = 10000,
+    crashMode = 'off',
+    crashProbability = 0.03,
+    crashDropMin = -0.25,
+    crashDropMax = -0.45,
+  } = options;
   
   const isStochastic = volatility > 0;
   const useStressTest = stressScenario && stressScenario !== 'none';
@@ -402,6 +657,44 @@ export function simulate(params, volatility = 0, options = {}) {
   if (kirchensteuer === "8") kirchensteuerSatz = KIRCHENSTEUER_SATZ_8;
   else if (kirchensteuer === "9") kirchensteuerSatz = KIRCHENSTEUER_SATZ_9;
   const taxRate = calculateTaxRate(kirchensteuerSatz);
+
+  // ============ GENERIERE STOCHASTISCHE PFADE ============
+  const totalYears = savings_years + withdrawal_years;
+  const savingsMonths = savings_years * MONTHS_PER_YEAR;
+  
+  // Jährliche Pfade für Inflation, Cashzins, Crashes
+  const annualPaths = generateAnnualPaths(totalYears, {
+    inflationMode,
+    inflationVolatility,
+    inflationFloor,
+    inflationCap,
+    cashRateMode,
+    cashRateVolatility,
+    corrInflationCash,
+    corrReturnInflation,
+    crashMode,
+    crashProbability,
+    crashDropMin,
+    crashDropMax,
+  }, params);
+  
+  // Sparraten-Schock-Events
+  const savingShocks = generateSavingShockEvents(savingsMonths, {
+    savingShockMode,
+    savingShockPNeg,
+    savingShockPPos,
+    savingShockFactorNeg,
+    savingShockFactorPos,
+    savingShockDurationNeg,
+  });
+  
+  // Extra-Ausgaben-Events (Entnahmephase)
+  const extraExpenseEvents = generateExtraExpenseEvents(withdrawal_years, {
+    extraExpenseMode,
+    extraExpenseProbability,
+    extraExpensePercent,
+    extraExpenseFixed,
+  });
 
   const history = [];
   let savings = start_savings;
@@ -415,12 +708,10 @@ export function simulate(params, volatility = 0, options = {}) {
   }
 
   const effectiveEtfRate = etf_rate_pa - etf_ter_pa;
-  const monthlySavingsRate = toMonthlyRate(savings_rate_pa);
   const monthlyEtfRate = toMonthlyRate(effectiveEtfRate);
-  const monthlyInflationRate = toMonthlyRate(inflation_rate_pa);
   const annualRaise = annual_raise_percent / 100;
-  const totalMonths = (savings_years + withdrawal_years) * MONTHS_PER_YEAR;
-  const savingsMonths = savings_years * MONTHS_PER_YEAR;
+  const totalMonths = totalYears * MONTHS_PER_YEAR;
+  // savingsMonths already declared above
 
   let savingsFull = savings >= savings_target;
   let yearlyUsedFreibetrag = 0;
@@ -448,6 +739,17 @@ export function simulate(params, volatility = 0, options = {}) {
     let vorabpauschaleTaxPaidThisMonth = 0;
     let taxPaidThisMonth = 0;
     let taxShortfall = 0;
+    let extraExpenseThisMonth = 0;
+    let savingShockFactorThisMonth = 1.0;
+    
+    // Dynamische jährliche Raten aus stochastischen Pfaden
+    const currentYearInflation = annualPaths.annualInflation[yearIdx] ?? inflation_rate_pa;
+    const currentYearCashRate = annualPaths.annualCashRates[yearIdx] ?? savings_rate_pa;
+    const monthlyInflationRate = toMonthlyRate(currentYearInflation);
+    const monthlySavingsRate = toMonthlyRate(currentYearCashRate);
+    
+    // Crash-Event für dieses Jahr
+    const crashEvent = annualPaths.annualCrashEvents[yearIdx];
     
     cumulativeInflation *= (1 + monthlyInflationRate);
     const totalEtfSharesStart = etfLots.reduce((acc, l) => acc + l.amount, 0);
@@ -502,11 +804,28 @@ export function simulate(params, volatility = 0, options = {}) {
       // Stress-Test: Deterministische Rendite
       monthlyEtfReturn = stressReturn;
       currentEtfPrice *= monthlyEtfReturn;
+    } else if (crashEvent !== null && monthInYear === 1) {
+      // Stochastisches Crash-Event: Crash-Rendite über 12 Monate verteilen
+      // Im ersten Monat des Crash-Jahres: berechne monatlichen Faktor
+      const annualCrashReturn = 1 + crashEvent; // z.B. 0.7 für -30%
+      const monthlyCrashReturn = Math.pow(annualCrashReturn, 1/12);
+      monthlyEtfReturn = monthlyCrashReturn;
+      currentEtfPrice *= monthlyEtfReturn;
+    } else if (crashEvent !== null) {
+      // Fortlaufende Monate im Crash-Jahr
+      const annualCrashReturn = 1 + crashEvent;
+      const monthlyCrashReturn = Math.pow(annualCrashReturn, 1/12);
+      monthlyEtfReturn = monthlyCrashReturn;
+      currentEtfPrice *= monthlyEtfReturn;
     } else if (isStochastic) {
       const continuousMonthlyRate = Math.log(1 + monthlyEtfRate);
       const drift = continuousMonthlyRate - 0.5 * monthlyVolatility * monthlyVolatility;
+      // Berücksichtige Korrelation mit Inflation (Return-Shock aus annualPaths)
+      const returnShock = annualPaths.annualReturnShocks[yearIdx] ?? 0;
       const z = randomNormal(0, 1);
-      monthlyEtfReturn = Math.exp(drift + monthlyVolatility * z);
+      // Kombiniere unabhängigen Zufall mit korreliertem Schock (gewichtet)
+      const combinedZ = z * 0.9 + returnShock * 0.1;
+      monthlyEtfReturn = Math.exp(drift + monthlyVolatility * combinedZ);
       currentEtfPrice *= monthlyEtfReturn;
     } else {
       monthlyEtfReturn = 1 + monthlyEtfRate;
@@ -533,8 +852,16 @@ export function simulate(params, volatility = 0, options = {}) {
     // ANSPARPHASE
     if (isSavingsPhase) {
       const raiseFactor = Math.pow(1 + annualRaise, yearIdx);
-      const currMonthlySav = monthly_savings * raiseFactor;
-      const currMonthlyEtf = monthly_etf * raiseFactor;
+      
+      // Sparraten-Schocks anwenden (aus vorgenerierten Events)
+      const monthIdxZeroBased = monthIdx - 1;
+      const baselineMultiplier = savingShocks.baselineMultipliers?.[monthIdxZeroBased] ?? 1.0;
+      const shockFactor = savingShocks.shockFactors?.[monthIdxZeroBased] ?? 1.0;
+      savingShockFactorThisMonth = shockFactor;
+      
+      // Effektive Sparraten: Basis * Raise * Baseline-Erhöhung * Schock-Faktor
+      const currMonthlySav = monthly_savings * raiseFactor * baselineMultiplier * shockFactor;
+      const currMonthlyEtf = monthly_etf * raiseFactor * baselineMultiplier * shockFactor;
 
       if (savingsFull) {
         etf_contrib = currMonthlyEtf + currMonthlySav;
@@ -659,6 +986,23 @@ export function simulate(params, volatility = 0, options = {}) {
           specialExpenseThisMonth = special_payout_net_withdrawal * Math.pow(1 + inflation_rate_pa / 100, yearsElapsed);
         }
         needed_net += specialExpenseThisMonth;
+      }
+      
+      // Stochastische Extra-Ausgaben (nur im ersten Monat des Entnahmejahres prüfen)
+      const withdrawalYearIndex = yearIdx - savings_years;
+      if (extraExpenseEvents && withdrawalYearIndex >= 0 && monthInYear === 1) {
+        const event = extraExpenseEvents[withdrawalYearIndex];
+        if (event) {
+          if (event.type === 'percent') {
+            const totalEtfSharesNow = etfLots.reduce((acc, l) => acc + l.amount, 0);
+            const currentTotal = savings + totalEtfSharesNow * currentEtfPrice;
+            extraExpenseThisMonth = currentTotal * event.value;
+          } else if (event.type === 'fixed') {
+            // Inflationsadjustiert vom Simulationsstart
+            extraExpenseThisMonth = event.value * cumulativeInflation;
+          }
+          needed_net += extraExpenseThisMonth;
+        }
       }
 
       if (needed_net > 0) {
@@ -851,6 +1195,11 @@ export function simulate(params, volatility = 0, options = {}) {
       capital_preservation_active: capitalPreservationActiveThisMonth || false,
       yearly_used_freibetrag: yearlyUsedFreibetrag,
       loss_pot: lossPot,
+      // MC-Erweiterte Risiken: Tracking-Felder
+      extra_expense: extraExpenseThisMonth,
+      saving_shock_factor: savingShockFactorThisMonth,
+      inflation_rate_year: currentYearInflation,
+      cash_rate_year: currentYearCashRate,
     });
   }
 

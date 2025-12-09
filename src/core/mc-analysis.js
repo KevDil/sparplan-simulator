@@ -76,6 +76,12 @@ export function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
   let entnahmeShortfallCount = 0;
   const emergencyFillMonths = [];
   
+  // MC-Erweiterte Risiken: Tracking
+  let pathsWithExtraExpenses = 0;
+  let pathsWithSavingShocks = 0;
+  const avgInflationRates = [];
+  let totalExtraExpenses = 0;
+  
   const SHORTFALL_TOLERANCE_PERCENT = 0.01;
   const SHORTFALL_TOLERANCE_ABS = 50;
   
@@ -160,6 +166,32 @@ export function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
     // Kapitalerhalt
     if (endWealth >= retirementWealth) capitalPreservedCount++;
     if (endWealthReal >= retirementWealthReal) capitalPreservedRealCount++;
+    
+    // MC-Erweiterte Risiken: Tracking für diesen Pfad
+    let hasExtraExpense = false;
+    let hasSavingShock = false;
+    let sumInflationRates = 0;
+    let inflationCount = 0;
+    let pathExtraExpenses = 0;
+    
+    for (const row of history) {
+      if ((row.extra_expense || 0) > 0) {
+        hasExtraExpense = true;
+        pathExtraExpenses += row.extra_expense;
+      }
+      if ((row.saving_shock_factor || 1) < 1) {
+        hasSavingShock = true;
+      }
+      if (row.inflation_rate_year !== undefined) {
+        sumInflationRates += row.inflation_rate_year;
+        inflationCount++;
+      }
+    }
+    
+    if (hasExtraExpense) pathsWithExtraExpenses++;
+    if (hasSavingShock) pathsWithSavingShocks++;
+    if (inflationCount > 0) avgInflationRates.push(sumInflationRates / inflationCount);
+    totalExtraExpenses += pathExtraExpenses;
   }
   
   // Perzentile pro Monat
@@ -260,6 +292,12 @@ export function analyzeMonteCarloResults(allHistories, params, mcOptions = {}) {
     
     // SoRR
     sorr,
+    
+    // MC-Erweiterte Risiken: Statistiken
+    pathsWithExtraExpensesRate: (pathsWithExtraExpenses / numSims) * 100,
+    pathsWithSavingShocksRate: (pathsWithSavingShocks / numSims) * 100,
+    medianAvgInflationRate: avgInflationRates.length > 0 ? percentile(avgInflationRates.sort((a, b) => a - b), 50) : null,
+    avgExtraExpensePerPath: numSims > 0 ? totalExtraExpenses / numSims : 0,
     
     // MC-Optionen (für Export)
     mcOptions,
