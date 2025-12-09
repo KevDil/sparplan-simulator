@@ -201,6 +201,45 @@ export function calculateRentenfaktorBreakEven(capital, rentenfaktor) {
 }
 
 /**
+ * Berechnet die effektive bAV-Rendite unter Berücksichtigung des Lifecycle-Modells
+ * 
+ * MetallRente Lifecycle-Modell: Automatische Umschichtung vor Rentenbeginn
+ * - DYNAMIK (100% Aktien):  Bis 7 Jahre vor Rente  → ~5,0% p.a. (nach Kosten)
+ * - BALANCE (50/50):        4 Jahre (7→3 vor Rente) → ~3,8% p.a. (nach Kosten)
+ * - SICHERHEIT (defensive): Letzte 3 Jahre         → ~2,8% p.a. (nach Kosten)
+ *
+ * @param {number} bavExpectedReturn - Erwartete Brutto-Rendite (z.B. 5.0%)
+ * @param {number} bavProductCosts - Jährliche Produktkosten (z.B. 0.7%)
+ * @param {number} yearsUntilRetirement - Jahre bis Renteneintritt
+ * @param {boolean} enableLifecycle - Lifecycle-Modell aktivieren
+ * @returns {Object} { bavEffectiveReturn, bavEffectiveReturnNet }
+ */
+export function calculateLifecycleReturn(bavExpectedReturn, bavProductCosts, yearsUntilRetirement, enableLifecycle = true) {
+  let bavEffectiveReturn = bavExpectedReturn;
+  
+  if (enableLifecycle && yearsUntilRetirement > 0) {
+    const yearsInDynamik = Math.max(0, yearsUntilRetirement - 7);
+    const yearsInBalance = Math.min(4, Math.max(0, yearsUntilRetirement - 3));
+    const yearsInSicherheit = Math.min(3, yearsUntilRetirement);
+    const totalYears = yearsInDynamik + yearsInBalance + yearsInSicherheit;
+    
+    bavEffectiveReturn = totalYears > 0 ? (
+      yearsInDynamik * BAV_CONSTANTS.RENDITE_DYNAMIK +
+      yearsInBalance * BAV_CONSTANTS.RENDITE_BALANCE +
+      yearsInSicherheit * BAV_CONSTANTS.RENDITE_SICHERHEIT
+    ) / totalYears : bavExpectedReturn;
+  }
+  
+  // Produktkosten abziehen
+  const bavEffectiveReturnNet = Math.max(bavEffectiveReturn - bavProductCosts, 0);
+  
+  return {
+    bavEffectiveReturn,      // vor Produktkosten (Lifecycle)
+    bavEffectiveReturnNet,   // nach Produktkosten
+  };
+}
+
+/**
  * bAV Netto-Rente nach Steuern/SV (mit KV-Freibetrag)
  * 
  * WICHTIG: Der Freibetrag (§ 226 Abs. 2 SGB V, 176,75€/Monat in 2024) gilt NUR für die
@@ -289,35 +328,12 @@ export function compareBavVsEtf(params) {
   const monthlyNetForEtf = taxSavings.monthlyNetCost;
   
   // === Lifecycle-Rendite für bAV berechnen ===
-  // MetallRente Lifecycle-Modell: Automatische Umschichtung vor Rentenbeginn
-  // 
-  // Phasen (vereinfachte Modellierung):
-  // - DYNAMIK (100% Aktien):  Bis 7 Jahre vor Rente  → ~5,0% p.a. (nach Kosten)
-  // - BALANCE (50/50):        4 Jahre (7→3 vor Rente) → ~3,8% p.a. (nach Kosten)
-  // - SICHERHEIT (defensive): Letzte 3 Jahre         → ~2,8% p.a. (nach Kosten)
-  //
-  // Diese Modellierung ist eine VEREINFACHUNG. Die tatsächliche Umschichtung
-  // erfolgt individuell basierend auf Kapitalmarkt und Garantieanforderungen.
-  // Die gewichtete Durchschnittsrendite berücksichtigt die Zeit in jeder Phase.
-  //
-  // HINWEIS: Renditen sind Schätzungen basierend auf historischen Daten der
-  // MetallRente Dynamik-Strategie (nach Abzug von ~0,7% Produktkosten).
-  let bavEffectiveReturn = bavExpectedReturn;
-  if (bavEnableLifecycle && yearsUntilRetirement > 0) {
-    const yearsInDynamik = Math.max(0, yearsUntilRetirement - 7);
-    const yearsInBalance = Math.min(4, Math.max(0, yearsUntilRetirement - 3));
-    const yearsInSicherheit = Math.min(3, yearsUntilRetirement);
-    const totalYears = yearsInDynamik + yearsInBalance + yearsInSicherheit;
-    
-    bavEffectiveReturn = totalYears > 0 ? (
-      yearsInDynamik * BAV_CONSTANTS.RENDITE_DYNAMIK +
-      yearsInBalance * BAV_CONSTANTS.RENDITE_BALANCE +
-      yearsInSicherheit * BAV_CONSTANTS.RENDITE_SICHERHEIT
-    ) / totalYears : bavExpectedReturn;
-  }
-
-  // Produktkosten als pauschale jährliche Kosten vom effektiven Satz abziehen
-  const bavEffectiveReturnNet = Math.max(bavEffectiveReturn - bavProductCosts, 0);
+  const { bavEffectiveReturn, bavEffectiveReturnNet } = calculateLifecycleReturn(
+    bavExpectedReturn,
+    bavProductCosts,
+    yearsUntilRetirement,
+    bavEnableLifecycle
+  );
   
   // === BAV-Simulation über simulate() ===
   // WICHTIG: bAV-Produkte sind STEUERFREI in der Ansparphase!
@@ -464,7 +480,11 @@ export function compareBavVsEtf(params) {
       totalContributions: monthlyNetForEtf * yearsUntilRetirement * 12,
       monthlyWithdrawalGross: etfMonthlyGross,
       monthlyWithdrawalNet: etfMonthlyNet,
+      // Entnahmerate p.a. (für Warnung bei >5%)
+      withdrawalRatePA: etfEndCapital > 0 ? (etfAnnualGross / etfEndCapital) * 100 : 0,
       withdrawal4PercentNet: etf4PercentNet,
+      // Gesamtentnahme bei konservativer 4%-Regel
+      total4PercentWithdrawal: etf4PercentNet * 12 * retirementYears,
       totalNetWithdrawal: etfTotalNet,
       capitalGainRatio: gainRatio,
       returnPA: etfExpectedReturn,
@@ -518,13 +538,21 @@ export function simulateBeitragsfreistellung(params) {
   // Szenario B: Freistellung + ETF
   // bAV wächst ohne neue Beiträge weiter
   // WICHTIG: bAV bleibt steuerfrei in der Ansparphase (keine Vorabpauschale)
+  // WICHTIG: Lifecycle-Rendite auch für beitragsfreie bAV verwenden (konsistent mit Szenario A)
+  const { bavEffectiveReturnNet: bavFreiReturnNet } = calculateLifecycleReturn(
+    bavExpectedReturn,
+    bavProductCosts,
+    yearsUntilRetirement,
+    true  // Lifecycle auch bei Freistellung (Anbieter schichtet trotzdem um)
+  );
+  
   const bavFreiParams = {
     start_savings: 0,
     start_etf: bavCurrentCapital,
     monthly_savings: 0,
     monthly_etf: 0,  // Keine neuen Beiträge!
     savings_rate_pa: 0,
-    etf_rate_pa: Math.max(bavExpectedReturn - bavProductCosts, 0),
+    etf_rate_pa: bavFreiReturnNet,  // KORRIGIERT: Lifecycle-Rendite statt bavExpectedReturn
     etf_ter_pa: 0,
     savings_target: 0,
     annual_raise_percent: 0,
@@ -644,6 +672,7 @@ export default {
   calculateBavTaxSavings,
   calculateGrvLoss,
   calculateRentenfaktorBreakEven,
+  calculateLifecycleReturn,
   sensitivityAnalysis,
   BAV_CONSTANTS,
 };

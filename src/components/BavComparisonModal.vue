@@ -366,11 +366,25 @@ const freistellung = computed(() => {
                 </tr>
                 <tr>
                   <td>Monatl. Entnahme (netto)</td>
-                  <td class="value highlight">{{ fmt(expectedScenario.etf.monthlyWithdrawalNet) }}</td>
+                  <td class="value" :class="{ 'highlight': true, 'highlight-orange': expectedScenario.etf.withdrawalRatePA > 5 }">
+                    {{ fmt(expectedScenario.etf.monthlyWithdrawalNet) }}
+                  </td>
                 </tr>
-                <tr>
-                  <td>4%-Regel Entnahme</td>
-                  <td class="value">{{ fmt(expectedScenario.etf.withdrawal4PercentNet) }}</td>
+                <tr :class="{ 'highlight-row-warning': expectedScenario.etf.withdrawalRatePA > 5 }">
+                  <td>Entnahmerate p.a.</td>
+                  <td class="value" :class="{ 'highlight-orange': expectedScenario.etf.withdrawalRatePA > 5 }">
+                    {{ fmtP(expectedScenario.etf.withdrawalRatePA) }}
+                    <span v-if="expectedScenario.etf.withdrawalRatePA > 5" class="warning-badge">⚠️ aggressiv</span>
+                  </td>
+                </tr>
+                <tr class="separator"></tr>
+                <tr class="conservative-row">
+                  <td>📊 4%-Regel Entnahme (konservativ)</td>
+                  <td class="value highlight-blue">{{ fmt(expectedScenario.etf.withdrawal4PercentNet) }}/Monat</td>
+                </tr>
+                <tr class="conservative-row">
+                  <td>📊 4%-Regel Gesamt</td>
+                  <td class="value highlight-blue">{{ fmt(expectedScenario.etf.total4PercentWithdrawal) }}</td>
                 </tr>
                 <tr class="total">
                   <td>Gesamt Netto-Entnahme</td>
@@ -404,6 +418,25 @@ const freistellung = computed(() => {
                 </span>
               </div>
             </div>
+          </div>
+          
+          <!-- Warnhinweis für optimistische Annahmen -->
+          <div class="assumptions-box" v-if="expectedScenario.etf.withdrawalRatePA > 5">
+            <strong>⚠️ Hinweis zu den Modellannahmen:</strong>
+            <ul>
+              <li><strong>ETF-Entnahmerate:</strong> {{ fmtP(expectedScenario.etf.withdrawalRatePA) }} p.a. ist aggressiv (>5%). Die konservative 4%-Regel empfiehlt {{ fmt(expectedScenario.etf.withdrawal4PercentNet) }}/Monat.</li>
+              <li><strong>bAV-Rendite:</strong> {{ fmtP(expectedScenario.bav.returnPA) }} p.a. nach Kosten ist eine optimistische Annahme basierend auf Vertragsdaten, keine Garantie.</li>
+              <li><strong>Deterministisch:</strong> Die Berechnung ignoriert Volatilität. In der Realität können ETF-Ergebnisse stark schwanken.</li>
+            </ul>
+          </div>
+          
+          <div class="assumptions-box" v-else>
+            <strong>ℹ️ Modellannahmen:</strong>
+            <ul>
+              <li><strong>bAV-Rendite:</strong> {{ fmtP(expectedScenario.bav.returnPA) }} p.a. nach Kosten ist eine Schätzung basierend auf Vertragsdaten (keine Garantie).</li>
+              <li><strong>ETF-Entnahme:</strong> Annuitätenbasierte Entnahme über {{ store.expectedLifespan - store.retirementAge }} Jahre bei 3% Rendite während Entnahmephase.</li>
+              <li><strong>Deterministisch:</strong> Beide Varianten laufen mit fixer Rendite - reale Ergebnisse können abweichen.</li>
+            </ul>
           </div>
           
           <!-- Szenarien-Übersicht -->
@@ -1083,6 +1116,60 @@ td.negative {
 .break-even li {
   margin-bottom: 0.5rem;
   color: var(--color-text-muted, #aaa);
+}
+
+/* Entnahmerate-Warnungen */
+.highlight-orange {
+  color: #f97316 !important;
+}
+
+.highlight-blue {
+  color: #3b82f6 !important;
+}
+
+.highlight-row-warning {
+  background: rgba(249, 115, 22, 0.1);
+}
+
+.conservative-row {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.conservative-row td {
+  font-style: italic;
+}
+
+.warning-badge {
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.3rem;
+  background: rgba(249, 115, 22, 0.2);
+  border-radius: 4px;
+  color: #f97316;
+}
+
+/* Assumptions Info Box */
+.assumptions-box {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+}
+
+.assumptions-box strong {
+  color: var(--color-primary, #6366f1);
+}
+
+.assumptions-box ul {
+  margin: 0.5rem 0 0 0;
+  padding-left: 1.5rem;
+}
+
+.assumptions-box li {
+  color: var(--color-text-muted, #aaa);
+  margin-bottom: 0.25rem;
 }
 
 /* Warning & Insight Boxes */
