@@ -9,6 +9,7 @@ export const useUiStore = defineStore('ui', () => {
   const showFormulaModal = ref(false)
   const showWizardModal = ref(false)
   const showOptimizerModal = ref(false)
+  const showBavComparisonModal = ref(false)
   const expertMode = ref(false)
   const standardChartLogScale = ref(false)
   const mcChartLogScale = ref(true)
@@ -50,6 +51,7 @@ export const useUiStore = defineStore('ui', () => {
     showFormulaModal.value = false
     showWizardModal.value = false
     showOptimizerModal.value = false
+    showBavComparisonModal.value = false
   }
 
   function toggleExpertMode() {
@@ -72,6 +74,7 @@ export const useUiStore = defineStore('ui', () => {
     showFormulaModal,
     showWizardModal,
     showOptimizerModal,
+    showBavComparisonModal,
     expertMode,
     standardChartLogScale,
     mcChartLogScale,

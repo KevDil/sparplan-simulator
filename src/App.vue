@@ -12,6 +12,7 @@ import InfoModal from './components/InfoModal.vue'
 import FormulaModal from './components/FormulaModal.vue'
 import WizardModal from './components/WizardModal.vue'
 import OptimizerModal from './components/OptimizerModal.vue'
+import BavComparisonModal from './components/BavComparisonModal.vue'
 import ScenarioForm from './components/ScenarioForm.vue'
 import ResultsPanel from './components/ResultsPanel.vue'
 
@@ -66,6 +67,7 @@ watch(
   <FormulaModal v-if="uiStore.showFormulaModal" @close="uiStore.showFormulaModal = false" />
   <WizardModal v-if="uiStore.showWizardModal" @close="uiStore.showWizardModal = false" />
   <OptimizerModal v-if="uiStore.showOptimizerModal" @close="uiStore.showOptimizerModal = false" />
+  <BavComparisonModal v-if="uiStore.showBavComparisonModal" @close="uiStore.showBavComparisonModal = false" />
   
   <main class="page" role="main">
     <ScenarioForm class="panel panel--inputs" />

@@ -38,6 +38,17 @@ const uiStore = useUiStore()
         <span>Formel-Cheatsheet</span>
       </button>
       <button 
+        class="btn-info btn-bav" 
+        @click="uiStore.showBavComparisonModal = true" 
+        title="bAV vs. ETF Vergleichsrechner"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 21h18M9 8h1M9 12h1M9 16h1M14 8h1M14 12h1M14 16h1"/>
+          <rect x="5" y="4" width="14" height="17" rx="1"/>
+        </svg>
+        <span>bAV vs. ETF</span>
+      </button>
+      <button 
         class="btn-theme" 
         type="button" 
         @click="uiStore.toggleTheme()"
